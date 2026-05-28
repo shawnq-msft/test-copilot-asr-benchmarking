@@ -1,0 +1,34 @@
+# Smart speaker voice commands — fr-FR
+# Format: filename.wav<TAB>Reference text
+# Run `python scripts/generate_testset.py --locale fr-FR` to synthesize WAV files.
+
+mets_un_minuteur_de_cinq_minutes.wav	Mets un minuteur de cinq minutes
+joue_du_jazz.wav	Joue du jazz
+eteins_les_lumieres_du_salon.wav	Éteins les lumières du salon
+quel_temps_fait_il_aujourd_hui.wav	Quel temps fait-il aujourd'hui
+ajoute_du_lait_a_ma_liste_de_courses.wav	Ajoute du lait à ma liste de courses
+monte_le_volume.wav	Monte le volume
+baisse_le_volume.wav	Baisse le volume
+passe_cette_chanson.wav	Passe cette chanson
+joue_la_chanson_suivante.wav	Joue la chanson suivante
+quelle_heure_est_il.wav	Quelle heure est-il
+mets_une_alarme_a_sept_heures.wav	Mets une alarme à sept heures
+annule_l_alarme.wav	Annule l'alarme
+appelle_maman.wav	Appelle maman
+envoie_un_message_a_jean.wav	Envoie un message à Jean
+lis_mes_messages.wav	Lis mes messages
+allume_la_lumiere_de_la_cuisine.wav	Allume la lumière de la cuisine
+baisse_la_lumiere_de_la_chambre_a_cinquante_pour_cent.wav	Baisse la lumière de la chambre à cinquante pour cent
+quelle_est_la_temperature_exterieure.wav	Quelle est la température extérieure
+joue_de_la_musique_relaxante.wav	Joue de la musique relaxante
+arrete_la_musique.wav	Arrête la musique
+augmente_la_luminosite.wav	Augmente la luminosité
+verrouille_la_porte_d_entree.wav	Verrouille la porte d'entrée
+ouvre_la_porte_du_garage.wav	Ouvre la porte du garage
+regle_le_thermostat_a_vingt_degres.wav	Règle le thermostat à vingt degrés
+rappelle_moi_de_prendre_mes_medicaments_a_midi.wav	Rappelle-moi de prendre mes médicaments à midi
+qu_est_ce_que_j_ai_dans_mon_calendrier_aujourd_hui.wav	Qu'est-ce que j'ai dans mon calendrier aujourd'hui
+dis_moi_une_blague.wav	Dis-moi une blague
+combien_de_temps_pour_aller_a_paris.wav	Combien de temps faut-il pour aller à Paris
+allume_la_television.wav	Allume la télévision
+bonne_nuit.wav	Bonne nuit

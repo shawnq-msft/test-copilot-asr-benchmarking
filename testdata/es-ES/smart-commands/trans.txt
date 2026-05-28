@@ -1,0 +1,34 @@
+# Smart speaker voice commands — es-ES
+# Format: filename.wav<TAB>Reference text
+# Run `python scripts/generate_testset.py --locale es-ES` to synthesize WAV files.
+
+pon_un_temporizador_de_cinco_minutos.wav	Pon un temporizador de cinco minutos
+pon_algo_de_jazz.wav	Pon algo de jazz
+apaga_las_luces_del_salon.wav	Apaga las luces del salón
+como_esta_el_tiempo_hoy.wav	Como está el tiempo hoy
+anade_leche_a_mi_lista_de_compras.wav	Añade leche a mi lista de compras
+sube_el_volumen.wav	Sube el volumen
+baja_el_volumen.wav	Baja el volumen
+salta_esta_cancion.wav	Salta esta canción
+pon_la_siguiente_cancion.wav	Pon la siguiente canción
+que_hora_es.wav	Qué hora es
+pon_una_alarma_a_las_siete.wav	Pon una alarma a las siete
+cancela_la_alarma.wav	Cancela la alarma
+llama_a_mama.wav	Llama a mamá
+envia_un_mensaje_a_juan.wav	Envía un mensaje a Juan
+lee_mis_mensajes.wav	Lee mis mensajes
+enciende_las_luces_de_la_cocina.wav	Enciende las luces de la cocina
+atenua_las_luces_del_dormitorio_al_cincuenta_por_ciento.wav	Atenúa las luces del dormitorio al cincuenta por ciento
+cual_es_la_temperatura_exterior.wav	Cuál es la temperatura exterior
+pon_musica_relajante.wav	Pon música relajante
+para_la_musica.wav	Para la música
+aumenta_el_brillo.wav	Aumenta el brillo
+cierra_la_puerta_principal_con_llave.wav	Cierra la puerta principal con llave
+abre_la_puerta_del_garaje.wav	Abre la puerta del garaje
+pon_el_termostato_a_veinte_grados.wav	Pon el termostato a veinte grados
+recuerdame_tomar_la_medicacion_al_mediodia.wav	Recuérdame tomar la medicación al mediodía
+que_tengo_en_el_calendario_hoy.wav	Qué tengo en el calendario hoy
+cuentame_un_chiste.wav	Cuéntame un chiste
+cuanto_se_tarda_en_llegar_a_madrid.wav	Cuánto se tarda en llegar a Madrid
+enciende_el_televisor.wav	Enciende el televisor
+buenas_noches.wav	Buenas noches

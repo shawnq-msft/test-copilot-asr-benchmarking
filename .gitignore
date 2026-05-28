@@ -1,0 +1,31 @@
+# Credentials
+.env
+
+# Generated audio files (run scripts/generate_testset.py to recreate)
+testdata/**/*.wav
+
+# Benchmark outputs
+results/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+.venv/
+venv/
+env/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/settings.json
+.idea/
+*.swp

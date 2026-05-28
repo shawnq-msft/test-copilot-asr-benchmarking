@@ -1,0 +1,34 @@
+# Smart speaker voice commands — en-GB
+# Format: filename.wav<TAB>Reference text
+# Run `python scripts/generate_testset.py --locale en-GB` to synthesize WAV files.
+
+set_a_timer_for_five_minutes.wav	Set a timer for five minutes
+play_some_jazz_music.wav	Play some jazz music
+turn_off_the_living_room_lights.wav	Turn off the living room lights
+what_is_the_weather_like_today.wav	What is the weather like today
+add_milk_to_my_shopping_list.wav	Add milk to my shopping list
+turn_up_the_volume.wav	Turn up the volume
+turn_down_the_volume.wav	Turn down the volume
+skip_this_song.wav	Skip this song
+play_the_next_song.wav	Play the next song
+what_time_is_it.wav	What time is it
+set_an_alarm_for_seven_am.wav	Set an alarm for seven AM
+cancel_the_alarm.wav	Cancel the alarm
+call_mum.wav	Call Mum
+send_a_message_to_john.wav	Send a message to John
+read_my_messages.wav	Read my messages
+turn_on_the_kitchen_lights.wav	Turn on the kitchen lights
+dim_the_bedroom_lights_to_fifty_percent.wav	Dim the bedroom lights to fifty percent
+what_is_the_temperature_outside.wav	What is the temperature outside
+play_relaxing_music.wav	Play relaxing music
+stop_the_music.wav	Stop the music
+increase_the_brightness.wav	Increase the brightness
+lock_the_front_door.wav	Lock the front door
+open_the_garage_door.wav	Open the garage door
+set_the_thermostat_to_twenty_degrees.wav	Set the thermostat to twenty degrees
+remind_me_to_take_my_medication_at_noon.wav	Remind me to take my medication at noon
+what_is_on_my_calendar_today.wav	What is on my calendar today
+tell_me_a_joke.wav	Tell me a joke
+how_long_does_it_take_to_drive_to_london.wav	How long does it take to drive to London
+turn_on_the_television.wav	Turn on the television
+good_night.wav	Good night

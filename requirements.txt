@@ -1,0 +1,7 @@
+python-dotenv
+requests
+numpy
+soundfile
+rapidfuzz
+tqdm
+azure-cognitiveservices-speech>=1.49.0

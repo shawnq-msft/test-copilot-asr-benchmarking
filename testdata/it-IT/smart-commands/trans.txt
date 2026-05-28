@@ -1,0 +1,34 @@
+# Smart speaker voice commands — it-IT
+# Format: filename.wav<TAB>Reference text
+# Run `python scripts/generate_testset.py --locale it-IT` to synthesize WAV files.
+
+imposta_un_timer_di_cinque_minuti.wav	Imposta un timer di cinque minuti
+metti_della_musica_jazz.wav	Metti della musica jazz
+spegni_le_luci_del_soggiorno.wav	Spegni le luci del soggiorno
+com_e_il_tempo_oggi.wav	Com'è il tempo oggi
+aggiungi_latte_alla_lista_della_spesa.wav	Aggiungi latte alla lista della spesa
+alza_il_volume.wav	Alza il volume
+abbassa_il_volume.wav	Abbassa il volume
+salta_questa_canzone.wav	Salta questa canzone
+metti_la_canzone_successiva.wav	Metti la canzone successiva
+che_ore_sono.wav	Che ore sono
+imposta_una_sveglia_per_le_sette.wav	Imposta una sveglia per le sette
+cancella_la_sveglia.wav	Cancella la sveglia
+chiama_la_mamma.wav	Chiama la mamma
+invia_un_messaggio_a_giovanni.wav	Invia un messaggio a Giovanni
+leggi_i_miei_messaggi.wav	Leggi i miei messaggi
+accendi_le_luci_della_cucina.wav	Accendi le luci della cucina
+abbassa_le_luci_della_camera_al_cinquanta_percento.wav	Abbassa le luci della camera al cinquanta percento
+qual_e_la_temperatura_esterna.wav	Qual è la temperatura esterna
+metti_della_musica_rilassante.wav	Metti della musica rilassante
+ferma_la_musica.wav	Ferma la musica
+aumenta_la_luminosita.wav	Aumenta la luminosità
+chiudi_a_chiave_la_porta_d_ingresso.wav	Chiudi a chiave la porta d'ingresso
+apri_il_garage.wav	Apri il garage
+imposta_il_termostato_a_venti_gradi.wav	Imposta il termostato a venti gradi
+ricordami_di_prendere_le_medicine_a_mezzogiorno.wav	Ricordami di prendere le medicine a mezzogiorno
+cosa_ho_in_agenda_oggi.wav	Cosa ho in agenda oggi
+raccontami_una_barzelletta.wav	Raccontami una barzelletta
+quanto_ci_vuole_per_andare_a_roma.wav	Quanto ci vuole per andare a Roma
+accendi_il_televisore.wav	Accendi il televisore
+buona_notte.wav	Buona notte

@@ -1,0 +1,34 @@
+# Smart speaker voice commands — de-DE
+# Format: filename.wav<TAB>Reference text
+# Run `python scripts/generate_testset.py --locale de-DE` to synthesize WAV files.
+
+stell_einen_timer_fuer_fuenf_minuten.wav	Stell einen Timer für fünf Minuten
+spiel_jazz_musik_ab.wav	Spiel Jazz Musik ab
+schalte_das_wohnzimmerlicht_aus.wav	Schalte das Wohnzimmerlicht aus
+wie_ist_das_wetter_heute.wav	Wie ist das Wetter heute
+fuege_milch_zur_einkaufsliste_hinzu.wav	Füge Milch zur Einkaufsliste hinzu
+lauter.wav	Lauter
+leiser.wav	Leiser
+ueberspringe_diesen_song.wav	Überspringe diesen Song
+naechsten_song_abspielen.wav	Nächsten Song abspielen
+wie_spaet_ist_es.wav	Wie spät ist es
+stelle_einen_wecker_fuer_sieben_uhr.wav	Stelle einen Wecker für sieben Uhr
+wecker_abbrechen.wav	Wecker abbrechen
+ruf_mama_an.wav	Ruf Mama an
+sende_eine_nachricht_an_johannes.wav	Sende eine Nachricht an Johannes
+lies_meine_nachrichten_vor.wav	Lies meine Nachrichten vor
+schalte_das_kuechenlicht_ein.wav	Schalte das Küchenlicht ein
+dimme_das_schlafzimmerlicht_auf_fuenfzig_prozent.wav	Dimme das Schlafzimmerlicht auf fünfzig Prozent
+wie_ist_die_aussentemperatur.wav	Wie ist die Außentemperatur
+spiel_entspannende_musik_ab.wav	Spiel entspannende Musik ab
+musik_stoppen.wav	Musik stoppen
+helligkeit_erhoehen.wav	Helligkeit erhöhen
+haustuere_abschliessen.wav	Haustür abschließen
+garagentor_oeffnen.wav	Garagentor öffnen
+thermostat_auf_zwanzig_grad_einstellen.wav	Thermostat auf zwanzig Grad einstellen
+erinnere_mich_um_zwoelf_uhr_an_meine_medikamente.wav	Erinnere mich um zwölf Uhr an meine Medikamente
+was_steht_heute_in_meinem_kalender.wav	Was steht heute in meinem Kalender
+erzaehl_mir_einen_witz.wav	Erzähl mir einen Witz
+wie_lange_dauert_die_fahrt_nach_berlin.wav	Wie lange dauert die Fahrt nach Berlin
+fernseher_einschalten.wav	Fernseher einschalten
+gute_nacht.wav	Gute Nacht
