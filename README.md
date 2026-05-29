@@ -1,8 +1,34 @@
-# ASR Benchmark — Azure Speech Services
+# Copilot ASR Benchmark for Azure Speech
 
-A reusable benchmarking framework for Azure Speech-to-Text services. Measures **Word Error Rate (WER)**, **Sentence Error Rate (SER)**, and latency (**LBL**, **UPL**) across five services and multiple languages.
+A reusable Copilot ASR benchmark framework for Azure Speech-to-Text services. It measures **Word Error Rate (WER)**, **Sentence Error Rate (SER)**, command recognition accuracy, and latency (**LBL**, **UPL**) across Azure Speech Fast Transcription, Speech SDK realtime recognition, LLM enhanced modes, and multiple languages.
+
+中文：这是一个面向 Copilot、AI Voice Agent 和智能语音命令场景的 Azure Speech ASR Benchmark 工具，用于评估语音识别准确率、实时转写、命令识别、错误类型和延迟表现。
+
+In a recent full validation run, the benchmark completed **604 test cases** across **5 recognition modes** without service invocation failures. The results showed Azure Speech was stable and usable for this English home-command scenario, with high command-level recognition accuracy in both `fast_llm` and `realtime` modes.
 
 Comes with a bundled 30-command smart speaker testset in five locales (en-GB, de-DE, es-ES, fr-FR, it-IT). Generate audio with one command, run the benchmark, and get detailed markdown reports.
+
+## Why this benchmark matters
+
+This project is designed for teams building Copilot-style voice experiences, voice agents, smart device commands, car assistants, and speech-driven product workflows. It helps answer practical ASR questions:
+
+- Can Azure Speech reliably recognize short voice commands?
+- Which recognition mode works best for command-and-control scenarios?
+- Where do errors come from: ASR quality, text normalization, reference labels, or pronunciation variants?
+- How do `fast_default`, `fast_llm`, `fast_mai`, `realtime`, and `realtime_refine` compare?
+- What are the recurring issues in numbers, word forms, homophones, and command phrase normalization?
+
+## Field validation notes
+
+The benchmark has been used to analyze realistic command recognition behavior, including:
+
+- Number and formatting mismatches, such as `one` versus `1`, or `ten` versus `10`
+- Near-homophone and phrase errors, such as `filter` versus `future`, `fan` versus `phone/fast`, and `auto` versus `autumn`
+- Command phrase variations, such as `start` versus `star`
+- Reference text and audio mismatches that can distort accuracy statistics
+- Product-specific command phrases that may need domain adaptation, such as `turn on`, `filter`, `turbo`, `oscillation`, `dehumidification`, `firefly light effect`, and `running lights effect`
+
+These notes make the benchmark useful beyond a raw WER score: it can separate model behavior, dataset quality, reference normalization, and product vocabulary issues.
 
 ---
 
@@ -11,10 +37,12 @@ Comes with a bundled 30-command smart speaker testset in five locales (en-GB, de
 ### 1. Clone and install
 
 ```bash
-git clone <repo-url>
+git clone https://github.com/shawnq-msft/test-copilot-asr-benchmarking.git
 cd test-copilot-asr-benchmarking
 pip install -r requirements.txt
 ```
+
+> The repository was renamed from `test-copliot-asr-benchmarking` to `test-copilot-asr-benchmarking` to fix the Copilot spelling. Existing GitHub links to the old URL continue to redirect to this repository.
 
 ### 2. Set up credentials
 
