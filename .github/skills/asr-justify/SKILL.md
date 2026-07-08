@@ -1,6 +1,6 @@
 ---
 name: asr-justify
-description: Read an ASR benchmark CSV (and its auto-generated report, error analysis, and word-timing sidecar) and write a subjective-justification markdown file that interprets the numbers across all five services (fast_default, fast_llm, fast_mai, realtime, realtime_refine), flags dataset/scoring artifacts, and surfaces concrete best/median/worst and cross-service disagreement cases. Manual invocation only.
+description: Read an ASR benchmark CSV (and its auto-generated report, error analysis, and word-timing sidecar) and write a subjective-justification markdown file that interprets the numbers across all six services (fast_default, fast_llm, fast_mai, fast_mai_1_5, realtime, realtime_refine), flags dataset/scoring artifacts, and surfaces concrete best/median/worst and cross-service disagreement cases. Manual invocation only.
 ---
 
 # asr-justify
@@ -10,7 +10,7 @@ report is arithmetic; this skill writes the interpretation.
 
 ## Inputs
 
-The benchmark covers **five Azure services**:
+The benchmark covers **six Azure services**:
 
 - `fast_default` — Azure Fast Transcription (api-version `2024-11-15`). Locale-locked.
 - `fast_llm` — Azure Fast Transcription with `enhancedMode.enabled=true`
@@ -19,6 +19,8 @@ The benchmark covers **five Azure services**:
   (e.g., German or French audio recognized as English).
 - `fast_mai` — Azure Fast Transcription with
   `enhancedMode.model="mai-transcribe-1"` and per-language locale.
+- `fast_mai_1_5` — Azure Fast Transcription with
+  `enhancedMode.model="mai-transcribe-1.5"` and per-language locale.
 - `realtime` — Speech SDK continuous recognition with PushAudioInputStream.
 - `realtime_refine` — Realtime with PostProcessingOption=PostRefinement
   (MRS Public Preview, Speech SDK 1.49.0+).
@@ -116,7 +118,7 @@ by replacing `.csv` with `_report.md` / `_error_analysis.md`.
        low-confidence.
      - High SUB rate → engine recognized a word but picked the wrong one.
    - **Latency** — interpret the gap. fast_default is fastest;
-     fast_llm/fast_mai add LLM/MAI inference time; realtime's UPL is
+     fast_llm/fast_mai/fast_mai_1_5 add LLM/MAI inference time; realtime's UPL is
      dominated by trailing-silence flush. First-latency is omitted for
      REST endpoints because response = first token. **Use the QA-passed
      numbers** (rows excluded by the latency QA pass should not appear

@@ -39,3 +39,20 @@ def transcribe_fast_mai(sample: Sample, pace: bool = True) -> AsrResult:
     return _streaming_upload(sample.pcm16_mono_16k, definition,
                              _endpoint(), pace, "fast_mai", sample,
                              key=LLM_AZURE_KEY, vad_end_s=vad_end_s)
+
+
+def transcribe_fast_mai_1_5(sample: Sample, pace: bool = True) -> AsrResult:
+    locale_short = sample.locale.split("-")[0]
+    definition = {
+        "locales": [locale_short],
+        "enhancedMode": {
+            "enabled": True,
+            "model": "mai-transcribe-1.5",
+        },
+    }
+    vad_end_s = None
+    if sample.last_word_end_s is not None:
+        vad_end_s = sample.last_word_end_s + SEGMENTATION_SILENCE_MS / 1000.0
+    return _streaming_upload(sample.pcm16_mono_16k, definition,
+                             _endpoint(), pace, "fast_mai_1_5", sample,
+                             key=LLM_AZURE_KEY, vad_end_s=vad_end_s)

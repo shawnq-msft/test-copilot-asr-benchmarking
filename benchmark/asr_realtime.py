@@ -39,6 +39,21 @@ def _extract_words(result_json_str: str) -> list[dict]:
     return out
 
 
+def _result_request_id(result, *, allow_result_id_fallback: bool = False) -> str | None:
+    prop_id = getattr(speechsdk.PropertyId, "SpeechServiceResponse_RequestId", None)
+    if prop_id is not None:
+        try:
+            request_id = result.properties.get_property(prop_id)
+            if request_id:
+                return f"RequestId={request_id}"
+        except Exception:
+            pass
+    result_id = getattr(result, "result_id", None)
+    if allow_result_id_fallback and result_id:
+        return f"ResultId={result_id}"
+    return None
+
+
 def _run_realtime(sample: Sample, *, service_name: str, key: str,
                   endpoint: str, region: str, pace: bool,
                   post_refinement: bool,
@@ -80,14 +95,33 @@ def _run_realtime(sample: Sample, *, service_name: str, key: str,
         "words": [],
         "finals": [],
         "error": None,
+        "request_ids": [],
+        "session_id": None,
     }
     session_done = threading.Event()
 
+    def remember_request_id(result, *, allow_result_id_fallback: bool = False) -> None:
+        request_id = _result_request_id(
+            result,
+            allow_result_id_fallback=allow_result_id_fallback,
+        )
+        if request_id and request_id not in state["request_ids"]:
+            state["request_ids"].append(request_id)
+
+    def remember_session_id(evt) -> None:
+        session_id = getattr(evt, "session_id", None)
+        if session_id and state["session_id"] is None:
+            state["session_id"] = session_id
+
     def on_recognizing(evt):
+        remember_session_id(evt)
+        remember_request_id(evt.result)
         if state["first_partial"] is None and evt.result.text:
             state["first_partial"] = time.perf_counter()
 
     def on_recognized(evt):
+        remember_session_id(evt)
+        remember_request_id(evt.result, allow_result_id_fallback=True)
         if evt.result.reason == speechsdk.ResultReason.RecognizedSpeech and evt.result.text:
             state["last_final"] = time.perf_counter()
             state["finals"].append(evt.result.text)
@@ -99,16 +133,24 @@ def _run_realtime(sample: Sample, *, service_name: str, key: str,
                 state["last_word_end_s"] = words[-1]["end_s"]
 
     def on_canceled(evt):
+        remember_session_id(evt)
+        if getattr(evt, "result", None) is not None:
+            remember_request_id(evt.result, allow_result_id_fallback=True)
         if evt.reason != speechsdk.CancellationReason.EndOfStream:
             state["error"] = f"canceled: {evt.reason} {evt.error_details}"
         session_done.set()
 
-    def on_session_stopped(_evt):
+    def on_session_started(evt):
+        remember_session_id(evt)
+
+    def on_session_stopped(evt):
+        remember_session_id(evt)
         session_done.set()
 
     recognizer.recognizing.connect(on_recognizing)
     recognizer.recognized.connect(on_recognized)
     recognizer.canceled.connect(on_canceled)
+    recognizer.session_started.connect(on_session_started)
     recognizer.session_stopped.connect(on_session_stopped)
 
     try:
@@ -141,7 +183,9 @@ def _run_realtime(sample: Sample, *, service_name: str, key: str,
 
     if state["error"]:
         return AsrResult(service_name, "".join(state["finals"]), None, None,
-                         state["error"])
+                         state["error"],
+                         request_id="; ".join(state["request_ids"]) or None,
+                         session_id=state["session_id"])
 
     audio_start = state["audio_start"]
 
@@ -160,6 +204,8 @@ def _run_realtime(sample: Sample, *, service_name: str, key: str,
 
     hypothesis = "".join(state["finals"])
     return AsrResult(service_name, hypothesis, first_lat_ms, lbl_ms, None,
+                     request_id="; ".join(state["request_ids"]) or None,
+                     session_id=state["session_id"],
                      upl_ms=upl_ms,
                      upl_self_ms=upl_ms,
                      upl_anchor="realtime",

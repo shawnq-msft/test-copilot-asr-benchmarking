@@ -34,7 +34,15 @@ TARGET_SAMPWIDTH = 2
 REALTIME_CHUNK_MS = 100
 SEGMENTATION_SILENCE_MS = 500
 
-SERVICES = ("fast_default", "fast_llm", "fast_mai", "realtime", "realtime_refine", "whisper_v3")
+SERVICES = (
+    "fast_default",
+    "fast_llm",
+    "fast_mai",
+    "fast_mai_1_5",
+    "realtime",
+    "realtime_refine",
+    "whisper_v3",
+)
 
 
 def rest_base_url() -> str:
@@ -82,6 +90,8 @@ class AsrResult:
     first_latency_ms: float | None
     lbl_ms: float | None
     error: str | None = None
+    request_id: str | None = None
+    session_id: str | None = None
     upl_ms: float | None = None
     upl_self_ms: float | None = None
     upl_anchor: str | None = None

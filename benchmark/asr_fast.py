@@ -35,6 +35,15 @@ def _multipart_epilogue() -> bytes:
     return f"\r\n--{BOUNDARY}--\r\n".encode()
 
 
+def _response_request_id(resp: requests.Response) -> str:
+    ids = []
+    for header in ("apim-request-id", "x-ms-request-id", "request-id"):
+        value = resp.headers.get(header)
+        if value:
+            ids.append(f"{header}={value}")
+    return "; ".join(ids)
+
+
 def _streaming_upload(pcm: bytes, definition_obj: dict, url: str,
                       pace: bool, service: str,
                       sample: Sample,
@@ -83,8 +92,10 @@ def _streaming_upload(pcm: bytes, definition_obj: dict, url: str,
     try:
         body_bytes = resp.content
     except Exception as e:
-        return AsrResult(service, "", None, None, f"read_body: {e!r}")
+        return AsrResult(service, "", None, None, f"read_body: {e!r}",
+                         request_id=_response_request_id(resp) or None)
     final_response_ts = time.perf_counter()
+    request_id = _response_request_id(resp) or None
 
     s_start = streaming_start_ts[0] if streaming_start_ts else first_response_ts
     audio_start = audio_start_ts[0] if audio_start_ts else s_start
@@ -94,11 +105,13 @@ def _streaming_upload(pcm: bytes, definition_obj: dict, url: str,
 
     if resp.status_code != 200:
         return AsrResult(service, "", first_latency_ms, lbl_ms,
-                         f"status={resp.status_code} body={body_bytes[:300]!r}")
+                         f"status={resp.status_code} body={body_bytes[:300]!r}",
+                         request_id=request_id)
     try:
         data = json.loads(body_bytes.decode("utf-8"))
     except Exception as e:
-        return AsrResult(service, "", first_latency_ms, lbl_ms, f"json_parse: {e!r}")
+        return AsrResult(service, "", first_latency_ms, lbl_ms, f"json_parse: {e!r}",
+                         request_id=request_id)
 
     text = ""
     if data.get("combinedPhrases"):
@@ -124,6 +137,7 @@ def _streaming_upload(pcm: bytes, definition_obj: dict, url: str,
 
     return AsrResult(service, text, first_latency_ms, lbl_ms, None,
                      upl_ms=upl_ms, upl_self_ms=upl_self_ms,
+                     request_id=request_id,
                      upl_anchor=upl_anchor,
                      vad_truncated_s=vad_end_s)
 

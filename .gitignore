@@ -4,7 +4,7 @@
 # Generated audio files (run scripts/generate_testset.py to recreate)
 testdata/**/*.wav
 
-# Benchmark outputs
+# Generated benchmark/test outputs; sample references under testdata/ stay visible.
 results/
 
 # Python

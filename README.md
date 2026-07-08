@@ -1,65 +1,125 @@
-# ASR Benchmark — Azure Speech Services
+# ASR Benchmark — GitHub Copilot Automation Tool
 
-A reusable benchmarking framework for Azure Speech-to-Text services. Measures **Word Error Rate (WER)**, **Sentence Error Rate (SER)**, and latency (**LBL**, **UPL**) across five services and multiple languages.
+**Automate end-to-end Azure Speech-to-Text benchmarking with GitHub Copilot.**
 
-Comes with a bundled 30-command smart speaker testset in five locales (en-GB, de-DE, es-ES, fr-FR, it-IT). Generate audio with one command, run the benchmark, and get detailed markdown reports.
+This tool fully integrates with Copilot to run ASR accuracy and latency tests across six Azure services, synthesize test audio, analyze errors, and write human-readable benchmark justifications — all via Copilot Chat.
+
+Measures **Word Error Rate (WER)**, **Sentence Error Rate (SER)**, and latency (**LBL**, **UPL**) across six services and multiple languages. Comes with a bundled 30-command smart speaker testset in five locales (en-GB, de-DE, es-ES, fr-FR, it-IT).
 
 ---
 
-## Quick Start
+## Quick Start with Copilot
 
-### 1. Clone and install
+### **Use GitHub Copilot to run the entire pipeline:**
+
+1. **Set up** — Open Copilot Chat and run prompt `.github/prompts/01-setup.prompt.md`
+   - Installs dependencies, configures `.env`, validates credentials
+
+2. **Generate audio** — Run `.github/prompts/02-generate-testset.prompt.md`
+   - Synthesizes WAV files from trans.txt using Azure TTS (all 5 locales or select one)
+
+3. **Run benchmark** — Run `.github/prompts/03-run-benchmark.prompt.md`
+   - Executes full benchmark or quick smoke test; generates CSV + reports
+
+4. **Normalize WER** — Run `.github/prompts/04-loose-match.prompt.md`
+   - Applies loose-match normalization for compound words and symbols
+
+5. **Analyze errors** — Run `.github/prompts/05-analyze.prompt.md`
+   - Re-runs error analysis on existing CSV
+
+6. **Write justification** — Run `.github/prompts/06-justify.prompt.md`
+   - Invokes `asr-justify` skill to write human prose interpretation of results
+
+**Each prompt is independent** — run any step in any order, or invoke the full pipeline end-to-end.
+
+---
+
+## Copilot Agent & Skills
+
+This workspace is a **GitHub Copilot Agent** configured with two key components:
+
+### Copilot Agent (`.github/copilot-instructions.md`)
+
+Declares the agent persona, capabilities, and available skills for Copilot Chat. The agent:
+- Guides you through the 6-step benchmark workflow
+- Explains each service's capabilities and caveats
+- References the `asr-justify` skill for result interpretation
+- Provides examples of how to invoke individual steps
+
+### Step-by-Step Prompts (`.github/prompts/`)
+
+Self-contained, runnable prompt files that Copilot executes:
+
+| # | Prompt | What it does |
+|---|--------|-------------|
+| 1 | `01-setup.prompt.md` | Install deps, copy `.env`, validate credentials |
+| 2 | `02-generate-testset.prompt.md` | Synthesize WAV files with Azure TTS for all/specific locales |
+| 3 | `03-run-benchmark.prompt.md` | Run `run_full.py` with options, save results |
+| 4 | `04-loose-match.prompt.md` | Normalize WER, regenerate reports |
+| 5 | `05-analyze.prompt.md` | Re-run error analysis on CSV |
+| 6 | `06-justify.prompt.md` | Invoke `asr-justify` skill for human interpretation |
+
+### `asr-justify` Skill (`.github/skills/asr-justify/SKILL.md`)
+
+Custom Copilot skill that reads a benchmark CSV + auto reports and writes a **9-step human prose interpretation**:
+
+1. Recap aggregate metrics from report
+2. Identify where WER is misleading (short utterances, hallucinations)
+3. Flag fast_llm language confusion (no locale set, auto-detection failures)
+4. Summarize genuine service disagreements
+5. Analyze error shape (INS/DEL/SUB breakdown)
+6. Interpret latency with network context
+7. Provide actionable recommendations
+8. QA pass on latency outliers
+9. Output formatted justification markdown
+
+**Usage via Copilot:**
+```
+Justify the results in results/asr-bench_en-GB_20260527_120000.csv
+```
+
+The skill automatically loads the report, error analysis, and word timings to produce a complete interpretation.
+
+---
+
+## Manual CLI (without Copilot)
+
+If you prefer command-line control:
 
 ```bash
+# Clone and install
 git clone <repo-url>
 cd test-copilot-asr-benchmarking
 pip install -r requirements.txt
-```
 
-### 2. Set up credentials
+# Copy and fill in .env
+cp .env.example .env
+# Edit .env with your Azure Speech credentials
 
-```bash
-copy .env.example .env   # Windows
-# cp .env.example .env   # macOS/Linux
-```
-
-Edit `.env` and fill in your Azure Speech resource details:
-
-```ini
-AZURE_SPEECH_KEY=your_key_here
-AZURE_SPEECH_REGION=eastus
-AZURE_SPEECH_ENDPOINT=https://eastus.api.cognitive.microsoft.com
-```
-
-> For `fast_llm` and `fast_mai` (LLM/MAI preview services), you may need a separate Speech resource. Add `LLM_AZURE_SPEECH_KEY`, `LLM_AZURE_SPEECH_REGION`, `LLM_AZURE_SPEECH_ENDPOINT` if so.
-
-### 3. Generate test audio
-
-The testset reference texts are included. Generate the WAV files using Azure TTS:
-
-```bash
-# All 5 locales (takes ~3 minutes)
-python scripts/generate_testset.py
-
-# Just English to get started
+# Generate audio for one locale
 python scripts/generate_testset.py --locale en-GB
-```
 
-### 4. Run a quick smoke test
-
-Test 5 samples × 2 services × 1 locale to verify everything works (~1-2 minutes):
-
-```bash
+# Run benchmark (quick test: 5 samples, 1 locale, 2 services)
 python run_full.py --languages en-GB --max-per-dataset 5 --no-pace --services fast_default realtime
+
+# View results
+cat results/asr-bench_en-GB_<timestamp>_report.md
+cat results/asr-bench_en-GB_<timestamp>_error_analysis.md
 ```
 
-### 5. View the results
-
-Open the generated report:
+### Full CLI options
 
 ```
-results/asr-bench_en-GB_<timestamp>_report.md
-results/asr-bench_en-GB_<timestamp>_error_analysis.md
+--languages          Locales to test (default: all)
+--max-per-dataset    Samples per dataset (default: 30)
+--workers            Thread pool size (default: 4)
+--no-pace            Skip real-time pacing (faster, unrealistic latency)
+--services           Services to benchmark (default: all 6)
+--resume             Resume from partial CSV
+--tag                Output filename prefix (default: asr-bench)
+--seed               Random seed (default: 42)
+--testdata-dir       Custom audio root (default: testdata/)
+--output-dir         Output directory (default: results/)
 ```
 
 ---
@@ -69,10 +129,11 @@ results/asr-bench_en-GB_<timestamp>_error_analysis.md
 | Service | Description |
 |---------|-------------|
 | `fast_default` | Azure Fast Transcription (REST, api-version 2024-11-15). Locale-locked. |
-| `fast_llm` | Fast Transcription + LLM enhanced mode (preview). **No locale set — auto-detects language.** May hallucinate or confuse languages. |
-| `fast_mai` | Fast Transcription + mai-transcribe-1 model (preview). Requires LLM Speech preview enabled. |
+| `fast_llm` | Fast Transcription + LLM enhanced mode (preview). **No locale set — auto-detects.** May hallucinate or confuse languages (intentional for benchmarking). |
+| `fast_mai` | Fast Transcription + mai-transcribe-1 model (preview). Requires LLM Speech preview. |
+| `fast_mai_1_5` | Fast Transcription + mai-transcribe-1.5 model (preview). Supports phrase list and transcribe style in MAI 1.5 preview. |
 | `realtime` | Speech SDK continuous recognition (WebSocket, word-level timestamps). |
-| `realtime_refine` | Realtime + Post-Stream Refinement (MRS preview, requires SDK ≥ 1.49.0). |
+| `realtime_refine` | Realtime + Post-Stream Refinement (MRS preview, SDK ≥ 1.49.0). |
 
 ---
 
@@ -88,58 +149,7 @@ The `testdata/` directory contains 30 smart speaker commands per locale:
 | fr-FR | French | "Mets un minuteur de cinq minutes", "Bonne nuit" |
 | it-IT | Italian | "Imposta un timer di cinque minuti", "Buona notte" |
 
-WAV files are generated from the `trans.txt` reference files using Azure TTS
-(voice: `en-GB-SoniaNeural`, `de-DE-KatjaNeural`, etc.).
-
----
-
-## Running Benchmarks
-
-### Full run
-
-```bash
-# One locale
-python run_full.py --languages en-GB
-
-# All locales (takes 20–60 min depending on network)
-python run_full.py
-
-# Specific services
-python run_full.py --languages en-GB --services fast_default fast_mai realtime
-```
-
-### Resume a partial run
-
-If a run was interrupted, resume it without re-testing completed samples:
-
-```bash
-python run_full.py --languages en-GB --resume results/asr-bench_en-GB_<timestamp>.csv
-```
-
-### Custom data
-
-Bring your own audio files in the same structure:
-
-```bash
-python run_full.py --testdata-dir /path/to/myaudio --output-dir /path/to/output --tag myproject
-```
-
-Your audio directory should contain `<locale>/<dataset-name>/` folders with WAV files and an optional `trans.txt`.
-
-### All CLI options
-
-```
---languages          Locales to test (default: all in config)
---max-per-dataset    Samples per dataset (default: 30)
---workers            Thread pool size (default: 4)
---no-pace            Skip real-time pacing (faster, but latency unrealistic)
---services           Services to benchmark (default: all 5)
---resume             Path to partial CSV to resume from
---tag                Output filename prefix (default: asr-bench)
---seed               Random seed for reproducible sampling (default: 42)
---testdata-dir       Custom audio data root (default: testdata/)
---output-dir         Where to write results (default: results/)
-```
+WAV files are generated from `trans.txt` using Azure TTS with per-locale neural voices (e.g., `en-GB-SoniaNeural`, `de-DE-KatjaNeural`).
 
 ---
 
@@ -150,34 +160,45 @@ For each run `<tag>_<locale>_<timestamp>`:
 | File | Description |
 |------|-------------|
 | `results/<run>.csv` | Per-sample, per-service metrics (WER, SER, INS/DEL/SUB, latency) |
-| `results/<run>_report.md` | Aggregate WER/latency table with endpoint and dataset details |
+| `results/<run>_report.md` | Aggregate WER/latency table with endpoint and dataset info |
 | `results/<run>_error_analysis.md` | Best/worst/hallucinations with `[▶]` audio playback links |
-| `results/<run>_words.jsonl` | Per-word timestamps for realtime samples (for latency audit) |
-| `results/<run>_justification.md` | Human prose interpretation (written manually with the asr-justify skill) |
-| `results/<run>.csv.strict` | Pre-normalization backup (created after running `loose_match.py`) |
+| `results/<run>_words.jsonl` | Per-word timestamps for realtime samples (latency audit) |
+| `results/<run>_justification.md` | Human prose interpretation (written with asr-justify skill) |
+| `results/<run>.csv.strict` | Pre-normalization CSV backup (created after loose_match) |
+| `results/audio/<dataset>/<sample_id>.wav` | Extracted audio clips for manual review |
 
 ---
 
 ## Latency Metrics
 
-Three latency metrics are computed for each sample:
+Three latency values are computed per sample:
 
-- **First Latency** — how quickly the first partial result appears after the user *starts* speaking (realtime only; REST has no partial results)
-- **LBL** (Last-final Beyond Last-chunk) — server flush time relative to the last audio chunk sent; can be negative when the server runs ahead of audio I/O
-- **UPL** (User-Perceived Latency) — how late the final transcript arrives after the user *stops* speaking; anchored to the realtime SDK's word-end timestamp for fair cross-service comparison
+- **First Latency** — how quickly the first partial appears after user *starts* speaking (realtime only)
+- **LBL** (Last-final Beyond Last-chunk) — server flush time after last audio chunk; can be negative
+- **UPL** (User-Perceived Latency) — delay of final transcript after user *stops* speaking; anchored to realtime SDK's word-end for fair cross-service comparison
+
+Full definitions and ASCII diagrams are in the auto-generated `_report.md`.
 
 ---
 
 ## WER Normalization
 
-WER is computed after NFKC + lowercase + punctuation-strip normalization. An additional
-**loose-match** pass handles systematic false positives:
+Normalization steps:
+1. **NFKC** — unicode normalization
+2. **Lowercase** — case-insensitive comparison
+3. **Punctuation strip** — remove punctuation
+4. **Space collapse** — normalize whitespace
+
+Optional **loose-match** post-processing fixes systematic false positives:
 
 ```bash
-# Apply loose matching after a benchmark run
-python -X utf8 scripts/loose_match.py results/asr-bench_en-GB_<timestamp>.csv
+python scripts/loose_match.py results/asr-bench_en-GB_<timestamp>.csv
+```
 
-# Regenerate reports after normalization
+Catches: compound-word splits (`stummschalten` ↔ `stumm schalten`), alphanumeric spacing (`2D` ↔ `2 D`), symbol variants (`360°` ↔ `360 gradi`).
+
+Regenerate reports after normalization:
+```bash
 python -X utf8 -c "
 from pathlib import Path
 from benchmark.report import build_report
@@ -189,45 +210,14 @@ for csv_path in sorted(Path('results').glob('asr-bench_*.csv')):
 "
 ```
 
-Loose matching catches: compound-word splits (`stummschalten` ↔ `stumm schalten`),
-alphanumeric spacing (`2D` ↔ `2 D`), and degree/percent symbol variants.
-
 ---
 
-## Using with GitHub Copilot
+## Adding Custom Test Data
 
-This project is configured as a Copilot Agent (`.github/copilot-instructions.md`).
-Copilot can run each step for you or guide you through the full pipeline.
-
-### Step-by-step prompts
-
-Use the prompt files in `.github/prompts/` — invoke them from the Copilot Chat panel:
-
-| Step | Prompt file | What it does |
-|------|-------------|--------------|
-| 1 | `01-setup.prompt.md` | Install dependencies, configure `.env`, validate credentials |
-| 2 | `02-generate-testset.prompt.md` | Synthesize WAV files with Azure TTS |
-| 3 | `03-run-benchmark.prompt.md` | Run `run_full.py` with your chosen options |
-| 4 | `04-loose-match.prompt.md` | Normalize WER for compound words and symbol variants |
-| 5 | `05-analyze.prompt.md` | Regenerate error analysis from existing CSV |
-| 6 | `06-justify.prompt.md` | Write human-readable interpretation (uses `asr-justify` skill) |
-
-### asr-justify skill
-
-The `.github/skills/asr-justify/SKILL.md` defines a 9-step procedure for writing
-a prose interpretation of benchmark results — covering where WER is misleading,
-fast_llm hallucinations, genuine service disagreements, latency QA, and recommendations.
-
----
-
-## Adding Your Own Test Data
-
-1. Create a directory: `testdata/<locale>/<dataset-name>/`
-2. Add `trans.txt` (one reference command per line, or tab-separated `filename.wav<TAB>reference`)
-3. Either:
-   - Place existing WAV files in the same directory
-   - Run `python scripts/generate_testset.py --locale <locale>` to synthesize them
-4. Run: `python run_full.py --languages <locale>`
+1. Create: `testdata/<locale>/<dataset-name>/`
+2. Add `trans.txt` — one reference command per line (or `filename.wav<TAB>reference`)
+3. Either place WAV files or run: `python scripts/generate_testset.py --locale <locale>`
+4. Run benchmark: `python run_full.py --languages <locale>`
 
 ---
 
@@ -235,10 +225,10 @@ fast_llm hallucinations, genuine service disagreements, latency QA, and recommen
 
 ```
 .
-├── .env.example                  # Credential template
+├── .env.example                     # Credential template
 ├── .github/
-│   ├── copilot-instructions.md   # Copilot agent persona and capabilities
-│   ├── prompts/                  # Step-by-step runnable prompt files
+│   ├── copilot-instructions.md      # Copilot agent persona
+│   ├── prompts/                     # 6 step-by-step prompt files
 │   │   ├── 01-setup.prompt.md
 │   │   ├── 02-generate-testset.prompt.md
 │   │   ├── 03-run-benchmark.prompt.md
@@ -246,32 +236,32 @@ fast_llm hallucinations, genuine service disagreements, latency QA, and recommen
 │   │   ├── 05-analyze.prompt.md
 │   │   └── 06-justify.prompt.md
 │   └── skills/asr-justify/
-│       └── SKILL.md              # Human result interpretation skill
-├── benchmark/
-│   ├── config.py                 # Credentials, service list, data classes
-│   ├── runner.py                 # Benchmark orchestrator (threading, resume)
-│   ├── report.py                 # Aggregate metrics → markdown report
-│   ├── metrics.py                # WER/SER computation
-│   ├── datasets_loader.py        # Audio loading from testdata/
-│   ├── audio_utils.py            # PCM/WAV conversion, resampling
-│   ├── ping.py                   # TCP ping + IP geolocation for report metadata
-│   ├── boundary_fix.py           # Speech boundary heuristics for realtime
-│   ├── asr_fast.py               # Azure Fast Transcription (REST)
-│   ├── asr_realtime.py           # Azure Speech SDK continuous recognition
-│   ├── asr_llm_speech.py         # fast_llm and fast_mai (LLM/MAI preview)
-│   └── asr_whisper.py            # Whisper v3 stub (not yet implemented)
+│       └── SKILL.md                 # Human result interpretation skill
+├── benchmark/                       # Core benchmarking framework
+│   ├── config.py                    # Services, locales, credentials
+│   ├── runner.py                    # Orchestrator (threading, resume)
+│   ├── report.py                    # Aggregate metrics → markdown
+│   ├── metrics.py                   # WER/SER computation
+│   ├── datasets_loader.py           # Audio loading from testdata/
+│   ├── audio_utils.py               # PCM/WAV conversion
+│   ├── ping.py                      # TCP ping + IP geolocation
+│   ├── boundary_fix.py              # Speech boundary heuristics
+│   ├── asr_fast.py                  # Azure Fast Transcription
+│   ├── asr_realtime.py              # Speech SDK continuous
+│   ├── asr_llm_speech.py            # LLM and MAI models
+│   └── asr_whisper.py               # Whisper v3 stub
 ├── scripts/
-│   ├── generate_testset.py       # Azure TTS synthesis from trans.txt
-│   ├── error_analysis.py         # Per-sample error breakdown
-│   └── loose_match.py            # Automatic WER normalization
-├── testdata/                     # Reference transcriptions (WAVs git-ignored)
+│   ├── generate_testset.py          # Azure TTS synthesis
+│   ├── error_analysis.py            # Error breakdown analysis
+│   └── loose_match.py               # WER normalization
+├── testdata/                        # Reference trans.txt (WAVs git-ignored)
 │   ├── en-GB/smart-commands/trans.txt
 │   ├── de-DE/smart-commands/trans.txt
 │   ├── es-ES/smart-commands/trans.txt
 │   ├── fr-FR/smart-commands/trans.txt
 │   └── it-IT/smart-commands/trans.txt
-├── results/                      # Benchmark outputs (git-ignored)
-├── run_full.py                   # Main entry point
+├── results/                         # Benchmark outputs (git-ignored)
+├── run_full.py                      # Main entry point
 └── requirements.txt
 ```
 
@@ -279,7 +269,39 @@ fast_llm hallucinations, genuine service disagreements, latency QA, and recommen
 
 ## Important Notes
 
-- **`fast_llm` caveat**: this service has no locale set and relies on language auto-detection. It may produce text in the wrong language, especially for non-English audio. This is intentional — it's included specifically to benchmark the auto-detection behavior.
-- **TTS-synthesized audio**: the bundled testset uses Azure TTS, which produces clean, consistent audio. WER will be lower than on real human recordings. Use your own recordings for more realistic results.
-- **Latency is network-dependent**: absolute UPL/LBL numbers depend heavily on your distance to the Azure region. Use relative comparisons between services, not absolute values.
-- **Short utterances amplify WER**: smart speaker commands are 3–10 words. A single word error gives 10–33% WER. Consider SER (Sentence Error Rate) alongside WER for a fuller picture.
+- **`fast_llm` caveat**: no locale set, relies on language auto-detection. May produce wrong-language text, especially for non-English audio. Intentional for benchmarking auto-detection behavior.
+- **TTS audio**: bundled testset uses Azure TTS (clean, consistent). WER will be lower than on real human recordings.
+- **Latency is network-dependent**: absolute UPL/LBL numbers depend on distance to Azure region. Use *relative* comparisons between services.
+- **Short utterances amplify WER**: smart speaker commands are 3–10 words. Single word error = 10–33% WER. Consider SER alongside WER.
+
+---
+
+## Examples
+
+### Run a smoke test with Copilot
+
+1. Open Copilot Chat in VS Code
+2. Copy the `.github/prompts/03-run-benchmark.prompt.md` file
+3. Ask: *"Run a quick benchmark: 5 samples, en-GB only, fast_default and realtime services"*
+4. Copilot executes the benchmark and generates reports
+5. Ask: *"Justify the results in the generated CSV"*
+6. Copilot invokes the `asr-justify` skill and produces a prose interpretation
+
+### Resume a partial benchmark (CLI)
+
+```bash
+python run_full.py --languages en-GB --resume results/asr-bench_en-GB_20260527_120000.csv
+```
+
+### Use your own test data (Copilot)
+
+1. Add audio files to `testdata/my-locale/my-dataset/`
+2. Add `trans.txt` with references
+3. In Copilot, ask: *"Benchmark my custom testdata: my-dataset, my-locale, all services"*
+4. Copilot runs the benchmark against your audio
+
+---
+
+## Reference
+
+For detailed latency definitions, speech boundary fixes, and WER computation formulas, see the auto-generated `*_report.md` after a benchmark run.

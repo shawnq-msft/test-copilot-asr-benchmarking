@@ -42,7 +42,7 @@ Examples:
                    help="Skip real-time pacing — runs faster but latency numbers are unrealistic")
     p.add_argument("--services", nargs="*", default=list(SERVICES),
                    help="Services to benchmark (default: all). "
-                        "Example: --services fast_default fast_mai realtime")
+                        "Example: --services fast_default fast_mai fast_mai_1_5 realtime")
     p.add_argument("--resume", type=str, default=None,
                    help="Path to an existing CSV to resume from (skips already-completed rows)")
     p.add_argument("--tag", type=str, default="asr-bench",

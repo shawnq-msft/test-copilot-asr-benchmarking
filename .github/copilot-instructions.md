@@ -8,12 +8,13 @@ You are an expert ASR (Automatic Speech Recognition) benchmark engineer helping 
 
 ## Project Overview
 
-This project benchmarks five Azure Speech services against voice command datasets, computing Word Error Rate (WER), Sentence Error Rate (SER), and latency metrics (First Latency, LBL, UPL).
+This project benchmarks six Azure Speech services against voice command datasets, computing Word Error Rate (WER), Sentence Error Rate (SER), and latency metrics (First Latency, LBL, UPL).
 
 **Services under test:**
 - `fast_default` — Azure Fast Transcription (REST, locale-locked)
 - `fast_llm` — Fast Transcription + LLM enhanced mode (preview, no locale set → auto-detection)
 - `fast_mai` — Fast Transcription + mai-transcribe-1 model (preview)
+- `fast_mai_1_5` — Fast Transcription + mai-transcribe-1.5 model (preview)
 - `realtime` — Speech SDK continuous recognition (WebSocket, word-level timestamps)
 - `realtime_refine` — Realtime + Post-Stream Refinement (MRS preview, SDK ≥1.49.0)
 
@@ -75,6 +76,88 @@ For each run `<tag>_<locale>_<timestamp>`:
 - Latency numbers are network-dependent; relative comparisons between services are what matter
 - WER on short utterances (3-10 words) is noisy — a single word error gives 10-33% WER
 - UPL for fast_* services is anchored on the realtime SDK's word-end timestamp for fair comparison
+
+## Speech Service and SDK Issue Reporting
+
+Use the Azure Speech SDK samples issue tracker for SDK bugs, sample bugs, documentation problems, and feature requests:
+
+https://github.com/Azure-Samples/cognitive-services-speech-sdk/issues
+
+Do not route every Speech problem to GitHub. Use this channel split:
+
+| Issue type | Best channel |
+| --- | --- |
+| SDK bug / sample bug | GitHub Issue |
+| Documentation problem | GitHub Issue |
+| Feature request | GitHub Issue |
+| Customer production outage | Azure Support Ticket |
+| Resource-specific failure | Azure Support Ticket |
+| Billing/SLA | Azure Support Ticket |
+
+### Evidence From Test Runs
+
+Benchmark CSVs include `request_id` and `session_id` columns. Use those fields, plus the realtime `_words.jsonl` sidecar when present, before drafting any Speech SDK or service issue. REST services should contain `apim-request-id` or another response header ID; realtime SDK rows should contain `SessionId` and may use `ResultId` as the closest correlating ID when `SpeechServiceResponse_RequestId` is unavailable.
+
+When drafting an issue, also include timestamp, region, endpoint type, SDK version, language SDK, OS, locale, auth type, test command, input sample ID, and exact error/cancellation details. If any ID field is blank, say so explicitly instead of inventing one.
+
+Keep GitHub issue reports minimal and failure-focused. Include only the failing service/component, the smallest reproduction command or snippet, the relevant request/session IDs, and the exact error or unexpected behavior. Do not include unrelated passing service rows, broad benchmark summaries, tester public IP/location, latency tables, or extra artifacts unless they directly explain the issue being filed.
+
+### GitHub Issue Template
+
+Use this structure when drafting GitHub issues for Speech SDK or Speech service behavior questions that belong on GitHub:
+
+````markdown
+## Issue Summary
+Short description of the problem.
+
+Example:
+SpeechRecognizer intermittently returns NoMatch after 30-60 minutes of continuous streaming.
+
+## Impact
+- Service: STT / TTS / Translation / Voice Live
+- Severity: High / Medium / Low
+- Customer impact:
+- Frequency:
+- Production or test:
+
+## Environment
+- SDK Version:
+- Language SDK: Python / C# / Java / JS / C++
+- OS:
+- Region:
+- Endpoint:
+- Authentication:
+- Network environment:
+
+## Steps to Reproduce
+1.
+2.
+3.
+4.
+
+## Expected Behavior
+What should happen.
+
+## Actual Behavior
+What actually happens.
+
+## Error Messages
+Paste exact error message.
+
+```text
+ERROR: ...
+RequestId: ...
+SessionId: ...
+```
+
+## Logs and Artifacts
+- Test command:
+- Input sample or manifest row:
+- SDK logs / service logs:
+- Minimal repro link or snippet:
+````
+
+Before filing, check current open issues for similar SDK bugs, STT/TTS behavior questions, Python/Java/C# SDK problems, translation issues, threading issues, memory leaks, and sample defects. If the impact is a production outage, resource-specific failure, or billing/SLA concern, advise using an Azure Support Ticket instead of GitHub.
 
 ## Running Commands
 
