@@ -2,7 +2,11 @@
 
 A reusable Copilot ASR benchmark framework for Azure Speech-to-Text services. It measures **Word Error Rate (WER)**, **Sentence Error Rate (SER)**, command recognition accuracy, and latency (**LBL**, **UPL**) across Azure Speech Fast Transcription, Speech SDK realtime recognition, LLM enhanced modes, and multiple languages.
 
-中文：这是一个面向 Copilot、AI Voice Agent 和智能语音命令场景的 Azure Speech ASR Benchmark 工具，用于评估语音识别准确率、实时转写、命令识别、错误类型和延迟表现。
+中文：这是一个用于 Azure Speech-to-Text 服务的 ASR Benchmark 框架，可通过 GitHub Copilot 辅助运行，适用于评估智能语音命令、Voice Agent 和多语言语音识别场景中的准确率、实时转写、错误类型和延迟表现。
+
+日本語: これは Azure Speech-to-Text サービス向けの ASR ベンチマークフレームワークで、GitHub Copilot による実行支援に対応し、スマート音声コマンド、Voice Agent、多言語音声認識シナリオの精度、リアルタイム文字起こし、エラー傾向、レイテンシを評価できます。
+
+한국어: 이 도구는 Azure Speech-to-Text 서비스를 위한 ASR 벤치마크 프레임워크로, GitHub Copilot의 실행 지원을 활용해 스마트 음성 명령, Voice Agent, 다국어 음성 인식 시나리오의 정확도, 실시간 전사, 오류 유형, 지연 시간을 평가할 수 있습니다.
 
 In a recent full validation run, the benchmark completed **604 test cases** across **5 recognition modes** without service invocation failures. The results showed Azure Speech was stable and usable for this English home-command scenario, with high command-level recognition accuracy in both `fast_llm` and `realtime` modes.
 
