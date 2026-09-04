@@ -57,7 +57,9 @@ def _result_request_id(result, *, allow_result_id_fallback: bool = False) -> str
 def _run_realtime(sample: Sample, *, service_name: str, key: str,
                   endpoint: str, region: str, pace: bool,
                   post_refinement: bool,
-                  segmentation_silence_ms: int | None = None) -> AsrResult:
+                  segmentation_silence_ms: int | None = None,
+                  phrases: tuple[str, ...] = (),
+                  phrase_weight: float = 1.0) -> AsrResult:
     if endpoint:
         speech_config = speechsdk.SpeechConfig(subscription=key, endpoint=endpoint)
     else:
@@ -85,6 +87,11 @@ def _run_realtime(sample: Sample, *, service_name: str, key: str,
     audio_config = speechsdk.audio.AudioConfig(stream=push_stream)
     recognizer = speechsdk.SpeechRecognizer(speech_config=speech_config,
                                             audio_config=audio_config)
+    if phrases:
+        phrase_list = speechsdk.PhraseListGrammar.from_recognizer(recognizer)
+        for phrase in phrases:
+            phrase_list.addPhrase(phrase)
+        phrase_list.setWeight(phrase_weight)
 
     state = {
         "audio_start": None,
@@ -214,19 +221,25 @@ def _run_realtime(sample: Sample, *, service_name: str, key: str,
                      words=state["words"] or None)
 
 
-def transcribe_realtime(sample: Sample, pace: bool = True) -> AsrResult:
+def transcribe_realtime(sample: Sample, pace: bool = True,
+                        phrases: tuple[str, ...] = (),
+                        phrase_weight: float = 1.0) -> AsrResult:
     return _run_realtime(sample, service_name="realtime",
                          key=AZURE_SPEECH_KEY,
                          endpoint=AZURE_SPEECH_ENDPOINT,
                          region=AZURE_SPEECH_REGION,
                          pace=pace, post_refinement=False,
-                         segmentation_silence_ms=SEGMENTATION_SILENCE_MS)
+                         segmentation_silence_ms=SEGMENTATION_SILENCE_MS,
+                         phrases=phrases, phrase_weight=phrase_weight)
 
 
-def transcribe_realtime_refine(sample: Sample, pace: bool = True) -> AsrResult:
+def transcribe_realtime_refine(sample: Sample, pace: bool = True,
+                               phrases: tuple[str, ...] = (),
+                               phrase_weight: float = 1.0) -> AsrResult:
     return _run_realtime(sample, service_name="realtime_refine",
                          key=REFINE_AZURE_KEY,
                          endpoint=REFINE_AZURE_ENDPOINT,
                          region=REFINE_AZURE_REGION,
                          pace=pace, post_refinement=True,
-                         segmentation_silence_ms=SEGMENTATION_SILENCE_MS)
+                         segmentation_silence_ms=SEGMENTATION_SILENCE_MS,
+                         phrases=phrases, phrase_weight=phrase_weight)

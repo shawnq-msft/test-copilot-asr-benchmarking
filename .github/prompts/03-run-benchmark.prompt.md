@@ -46,7 +46,7 @@ python run_full.py
 
 **Specific services only:**
 ```bash
-python run_full.py --languages en-GB --services fast_default fast_mai fast_mai_1_5 realtime
+python run_full.py --languages en-GB --services fast_default fast_mai_1_5 fast_mai_2 realtime
 ```
 
 **Resume a partial run:**
@@ -67,7 +67,7 @@ python run_full.py --testdata-dir /path/to/myaudio --output-dir /path/to/output 
 | `--max-per-dataset` | 30 | Max samples per dataset |
 | `--workers` | 4 | Parallel thread pool size |
 | `--no-pace` | off | Skip real-time pacing (faster, unrealistic latency) |
-| `--services` | all 6 | Services to benchmark |
+| `--services` | all configured | Services to benchmark |
 | `--resume` | none | Path to partial CSV to resume |
 | `--tag` | asr-bench | Prefix for output filenames |
 | `--seed` | 42 | Random seed for reproducible sampling |

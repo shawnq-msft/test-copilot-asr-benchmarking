@@ -8,13 +8,14 @@ You are an expert ASR (Automatic Speech Recognition) benchmark engineer helping 
 
 ## Project Overview
 
-This project benchmarks six Azure Speech services against voice command datasets, computing Word Error Rate (WER), Sentence Error Rate (SER), and latency metrics (First Latency, LBL, UPL).
+This project benchmarks Azure Speech services against voice command datasets, computing Word Error Rate (WER), Sentence Error Rate (SER), and latency metrics (First Latency, LBL, UPL).
 
 **Services under test:**
 - `fast_default` — Azure Fast Transcription (REST, locale-locked)
 - `fast_llm` — Fast Transcription + LLM enhanced mode (preview, no locale set → auto-detection)
-- `fast_mai` — Fast Transcription + mai-transcribe-1 model (preview)
-- `fast_mai_1_5` — Fast Transcription + mai-transcribe-1.5 model (preview)
+- `fast_mai` — Fast Transcription + MAI-Transcribe-1 model (deprecated Aug 20, 2026)
+- `fast_mai_1_5` — Fast Transcription + MAI-Transcribe-1.5 model (preview)
+- `fast_mai_2` — Fast Transcription + MAI-Transcribe-2 model (preview)
 - `realtime` — Speech SDK continuous recognition (WebSocket, word-level timestamps)
 - `realtime_refine` — Realtime + Post-Stream Refinement (MRS preview, SDK ≥1.49.0)
 

@@ -28,7 +28,7 @@ Then open `.env` and fill in the required values:
 - `AZURE_SPEECH_REGION` — your Azure region (e.g. `eastus`)
 - `AZURE_SPEECH_ENDPOINT` — your endpoint URL (e.g. `https://eastus.api.cognitive.microsoft.com`)
 
-For `fast_llm`, `fast_mai`, and `fast_mai_1_5` you may need a separate Speech resource with LLM/MAI preview enabled.
+For `fast_llm`, `fast_mai`, `fast_mai_1_5`, and `fast_mai_2` you may need a Foundry Speech resource in a supported LLM/MAI region.
 Set `LLM_AZURE_SPEECH_KEY`, `LLM_AZURE_SPEECH_REGION`, `LLM_AZURE_SPEECH_ENDPOINT` if so.
 
 ## 3. Validate credentials

@@ -10,9 +10,9 @@ A reusable Copilot ASR benchmark framework for Azure Speech-to-Text services. It
 
 In a recent full validation run, the benchmark completed **604 test cases** across **5 recognition modes** without service invocation failures. The results showed Azure Speech was stable and usable for this English home-command scenario, with high command-level recognition accuracy in both `fast_llm` and `realtime` modes.
 
-This tool fully integrates with Copilot to run ASR accuracy and latency tests across six Azure services, synthesize test audio, analyze errors, and write human-readable benchmark justifications — all via Copilot Chat.
+This tool fully integrates with Copilot to run ASR accuracy and latency tests across Azure services, synthesize test audio, analyze errors, and write human-readable benchmark justifications — all via Copilot Chat.
 
-Measures **Word Error Rate (WER)**, **Sentence Error Rate (SER)**, and latency (**LBL**, **UPL**) across six services and multiple languages. Comes with a bundled 30-command smart speaker testset in five locales (en-GB, de-DE, es-ES, fr-FR, it-IT).
+Measures **Word Error Rate (WER)**, **Sentence Error Rate (SER)**, and latency (**LBL**, **UPL**) across multiple services and languages. Comes with a bundled 30-command smart speaker testset in five locales (en-GB, de-DE, es-ES, fr-FR, it-IT).
 
 ## Why this benchmark matters
 
@@ -21,7 +21,7 @@ This project is designed for teams building Copilot-style voice experiences, voi
 - Can Azure Speech reliably recognize short voice commands?
 - Which recognition mode works best for command-and-control scenarios?
 - Where do errors come from: ASR quality, text normalization, reference labels, or pronunciation variants?
-- How do `fast_default`, `fast_llm`, `fast_mai`, `realtime`, and `realtime_refine` compare?
+- How do `fast_default`, `fast_llm`, `fast_mai_1_5`, `fast_mai_2`, `realtime`, and `realtime_refine` compare?
 - What are the recurring issues in numbers, word forms, homophones, and command phrase normalization?
 
 ## Field validation notes
@@ -146,13 +146,23 @@ cat results/asr-bench_en-GB_<timestamp>_error_analysis.md
 --max-per-dataset    Samples per dataset (default: 30)
 --workers            Thread pool size (default: 4)
 --no-pace            Skip real-time pacing (faster, unrealistic latency)
---services           Services to benchmark (default: all 6)
+--services           Services to benchmark (default: all configured)
 --resume             Resume from partial CSV
 --tag                Output filename prefix (default: asr-bench)
 --seed               Random seed (default: 42)
 --testdata-dir       Custom audio root (default: testdata/)
 --output-dir         Output directory (default: results/)
+--phrase-list        Runtime phrase hints (space-separated; quote multiword phrases)
+--phrase-weight      Phrase-list bias from 0.0 to 2.0 (default: 1.0)
 ```
+
+For example, to bias all supported endpoints toward an unabbreviated place name:
+
+```bash
+python run_full.py --languages en-US --services fast_default fast_llm fast_mai_1_5 fast_mai_2 realtime realtime_refine --phrase-list "Ionia, Michigan" --phrase-weight 2.0
+```
+
+Phrase lists influence recognition but are not a guaranteed output-formatting rule. In particular, display-form inverse text normalization can still abbreviate words. The legacy `mai-transcribe-1` model rejects `phraseList`; the benchmark therefore leaves that endpoint unadapted while applying phrases to supported endpoints.
 
 ---
 
@@ -162,8 +172,9 @@ cat results/asr-bench_en-GB_<timestamp>_error_analysis.md
 |---------|-------------|
 | `fast_default` | Azure Fast Transcription (REST, api-version 2024-11-15). Locale-locked. |
 | `fast_llm` | Fast Transcription + LLM enhanced mode (preview). **No locale set — auto-detects.** May hallucinate or confuse languages (intentional for benchmarking). |
-| `fast_mai` | Fast Transcription + mai-transcribe-1 model (preview). Requires LLM Speech preview. |
-| `fast_mai_1_5` | Fast Transcription + mai-transcribe-1.5 model (preview). Supports phrase list and transcribe style in MAI 1.5 preview. |
+| `fast_mai` | Fast Transcription + MAI-Transcribe-1 model. Deprecated Aug 20, 2026. |
+| `fast_mai_1_5` | Fast Transcription + MAI-Transcribe-1.5 model (preview). Supports phrase list and transcribe style. |
+| `fast_mai_2` | Fast Transcription + MAI-Transcribe-2 model (preview). Supports 60 languages, keyword biasing, diarization, word timestamps, and configurable transcription style. |
 | `realtime` | Speech SDK continuous recognition (WebSocket, word-level timestamps). |
 | `realtime_refine` | Realtime + Post-Stream Refinement (MRS preview, SDK ≥ 1.49.0). |
 

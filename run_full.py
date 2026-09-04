@@ -42,7 +42,7 @@ Examples:
                    help="Skip real-time pacing — runs faster but latency numbers are unrealistic")
     p.add_argument("--services", nargs="*", default=list(SERVICES),
                    help="Services to benchmark (default: all). "
-                        "Example: --services fast_default fast_mai fast_mai_1_5 realtime")
+                        "Example: --services fast_default fast_mai_1_5 fast_mai_2 realtime")
     p.add_argument("--resume", type=str, default=None,
                    help="Path to an existing CSV to resume from (skips already-completed rows)")
     p.add_argument("--tag", type=str, default="asr-bench",
@@ -54,7 +54,14 @@ Examples:
                         "Override to use your own audio files.")
     p.add_argument("--output-dir", type=str, default=None,
                    help="Directory for result files (default: results/ next to this script)")
+    p.add_argument("--phrase-list", nargs="*", default=[],
+                   help="Runtime phrase-list hints applied to supported Speech endpoints")
+    p.add_argument("--phrase-weight", type=float, default=1.0,
+                   help="Phrase-list biasing weight from 0.0 to 2.0 (default: 1.0)")
     args = p.parse_args()
+
+    if not 0.0 <= args.phrase_weight <= 2.0:
+        p.error("--phrase-weight must be between 0.0 and 2.0")
 
     assert_credentials()
 
@@ -103,7 +110,9 @@ Examples:
         print(f"[run] {len(samples)} samples × {len(active_services)} services, workers={args.workers}")
         run_benchmark(samples, csv_path, services=active_services,
                       workers=args.workers, pace=not args.no_pace, retries=2,
-                      sequential=(args.workers <= 1))
+                      sequential=(args.workers <= 1),
+                      phrases=tuple(args.phrase_list),
+                      phrase_weight=args.phrase_weight)
         build_report(csv_path, md_path, tag=f"{args.tag}_{lang}")
         print(f"\nCSV:    {csv_path}")
         print(f"Report: {md_path}")

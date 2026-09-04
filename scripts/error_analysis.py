@@ -26,6 +26,7 @@ ALL_KNOWN_SERVICES = (
     "fast_llm",
     "fast_mai",
     "fast_mai_1_5",
+    "fast_mai_2",
     "realtime",
     "realtime_refine",
     "whisper_v3",

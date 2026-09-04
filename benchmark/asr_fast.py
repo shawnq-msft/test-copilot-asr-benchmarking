@@ -6,15 +6,25 @@ import time
 import requests
 
 from .audio_utils import chunk_pcm, truncate_pcm, wav_header_placeholder
-from .config import (AZURE_SPEECH_KEY, FAST_API_VERSION,
+from .config import (AZURE_SPEECH_KEY, FAST_API_VERSION, LLM_API_VERSION,
                      REALTIME_CHUNK_MS, SEGMENTATION_SILENCE_MS,
                      AsrResult, Sample, rest_base_url)
 
 BOUNDARY = "----AzureBenchBoundary9876543210"
 
 
-def _endpoint() -> str:
-    return f"{rest_base_url()}?api-version={FAST_API_VERSION}"
+def _endpoint(*, phrase_list: bool = False) -> str:
+    api_version = LLM_API_VERSION if phrase_list else FAST_API_VERSION
+    return f"{rest_base_url()}?api-version={api_version}"
+
+
+def add_phrase_list(definition: dict, phrases: tuple[str, ...],
+                    phrase_weight: float) -> None:
+    if phrases:
+        definition["phraseList"] = {
+            "phrases": list(phrases),
+            "biasingWeight": phrase_weight,
+        }
 
 
 def _multipart_preamble(definition: str) -> bytes:
@@ -142,11 +152,15 @@ def _streaming_upload(pcm: bytes, definition_obj: dict, url: str,
                      vad_truncated_s=vad_end_s)
 
 
-def transcribe_fast_default(sample: Sample, pace: bool = True) -> AsrResult:
+def transcribe_fast_default(sample: Sample, pace: bool = True,
+                            phrases: tuple[str, ...] = (),
+                            phrase_weight: float = 1.0) -> AsrResult:
     definition = {"locales": [sample.locale]}
+    add_phrase_list(definition, phrases, phrase_weight)
     vad_end_s = None
     if sample.last_word_end_s is not None:
         vad_end_s = sample.last_word_end_s + SEGMENTATION_SILENCE_MS / 1000.0
     return _streaming_upload(sample.pcm16_mono_16k, definition,
-                             _endpoint(), pace, "fast_default", sample,
+                             _endpoint(phrase_list=bool(phrases)), pace,
+                             "fast_default", sample,
                              vad_end_s=vad_end_s)

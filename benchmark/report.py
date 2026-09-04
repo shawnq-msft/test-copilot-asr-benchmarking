@@ -52,9 +52,18 @@ def _endpoints_for_locale(locale: str) -> dict[str, dict]:
             "name": "Azure Fast Transcription — MAI 1.5 model (preview)",
             "url": f"{_LLM_REST_BASE}?api-version={LLM_API_VERSION}",
             "transport": "HTTPS POST (multipart/form-data, chunked)",
-            "config": f'definition = {{"locales": ["{locale_short}"], "enhancedMode": {{"enabled": true, "model": "mai-transcribe-1.5"}}}}',
+            "config": f'definition = {{"locales": ["{locale_short}"], "enhancedMode": {{"enabled": true, "model": "MAI-Transcribe-1.5"}}}}',
             "partials": "no",
-            "note": "Requires Speech resource with mai-transcribe-1.5 preview enabled. Phrase list and transcribe style are supported in 1.5.",
+            "note": "Requires a Foundry Speech resource in a supported region. Phrase list and transcribe style are supported.",
+            "doc": "https://learn.microsoft.com/en-us/azure/ai-services/speech-service/mai-transcribe",
+        },
+        "fast_mai_2": {
+            "name": "Azure Fast Transcription — MAI 2 model (preview)",
+            "url": f"{_LLM_REST_BASE}?api-version={LLM_API_VERSION}",
+            "transport": "HTTPS POST (multipart/form-data, chunked)",
+            "config": f'definition = {{"locales": ["{locale_short}"], "enhancedMode": {{"enabled": true, "model": "MAI-Transcribe-2"}}}}',
+            "partials": "no",
+            "note": "Requires a Foundry Speech resource in a supported region. Phrase list, transcription styles, diarization, and word timestamps are supported by the model.",
             "doc": "https://learn.microsoft.com/en-us/azure/ai-services/speech-service/mai-transcribe",
         },
         "realtime": {
@@ -137,7 +146,7 @@ def build_report(csv_path: Path, md_path: Path, tag: str = "") -> None:
     endpoints = _endpoints_for_locale(locale)
     lines.append("## Endpoints under test")
     lines.append("")
-    services_in_run = [s for s in ("fast_default", "fast_llm", "fast_mai", "fast_mai_1_5", "realtime", "realtime_refine")
+    services_in_run = [s for s in ("fast_default", "fast_llm", "fast_mai", "fast_mai_1_5", "fast_mai_2", "realtime", "realtime_refine", "whisper_v3")
                        if any(r["service"] == s for r in rows)]
     for svc in services_in_run:
         e = endpoints[svc]
@@ -272,10 +281,10 @@ def build_report(csv_path: Path, md_path: Path, tag: str = "") -> None:
     lines.append("- **LBL** (last-final beyond last-chunk) = `last_recognized_event_wall − end_of_audio`. Pure server flush time relative to the last byte we pushed. **May be negative** when the SDK emits the final result before the last chunk goes out.")
     lines.append("- **UPL** (user-perceived latency) = `last_recognized_event_wall − speech_end`. How late the final result arrives after the user actually stopped speaking.")
     lines.append("")
-    lines.append("**fast_default / fast_llm / fast_mai / fast_mai_1_5** (REST, no partials):")
+    lines.append("**fast_default / fast_llm / fast_mai / fast_mai_1_5 / fast_mai_2** (REST, no partials):")
     lines.append("- **LBL** = `response_fully_read_wall − end_of_audio_wall`. Time from last uploaded byte to fully-received response.")
     lines.append("- **UPL** = `response_fully_read_wall − speech_end_wall`. `speech_end_wall` is taken from the realtime SDK's last-word offset for that sample (when realtime ran successfully on it), so all services compare against the same reference. The CSV column `upl_self_ms` keeps each service's own phrase-derived value, and `upl_anchor` is `realtime` when anchored or `self` when the realtime anchor was unavailable.")
-    lines.append("- Note: `fast_mai` and `fast_mai_1_5` phrase boundaries can span the full audio; using the realtime anchor here makes UPL directly comparable across services.")
+    lines.append("- Note: MAI phrase boundaries can span the full audio; using the realtime anchor here makes UPL directly comparable across services.")
     lines.append("- **First Latency** is omitted because the REST response is delivered in one shot — there is no first-token signal to measure against.")
     lines.append(f"- **VAD truncation**: when realtime ran first and produced word timestamps, fast_* audio is truncated at `speech_end + {SEGMENTATION_SILENCE_MS} ms` to simulate a VAD cutting the stream after end-of-speech. The CSV column `vad_truncated_s` records the truncated duration.")
     lines.append("")

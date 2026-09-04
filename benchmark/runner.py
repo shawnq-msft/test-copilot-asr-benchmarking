@@ -11,7 +11,8 @@ from tqdm import tqdm
 
 from . import boundary_fix
 from .asr_fast import transcribe_fast_default
-from .asr_llm_speech import transcribe_fast_llm, transcribe_fast_mai, transcribe_fast_mai_1_5
+from .asr_llm_speech import (transcribe_fast_llm, transcribe_fast_mai,
+                             transcribe_fast_mai_1_5, transcribe_fast_mai_2)
 from .asr_realtime import transcribe_realtime, transcribe_realtime_refine
 from .asr_whisper import transcribe_whisper_v3
 from .config import SERVICES, AsrResult, Sample
@@ -22,6 +23,7 @@ ADAPTERS = {
     "fast_llm": transcribe_fast_llm,
     "fast_mai": transcribe_fast_mai,
     "fast_mai_1_5": transcribe_fast_mai_1_5,
+    "fast_mai_2": transcribe_fast_mai_2,
     "realtime": transcribe_realtime,
     "realtime_refine": transcribe_realtime_refine,
     "whisper_v3": transcribe_whisper_v3,
@@ -42,11 +44,16 @@ CSV_FIELDS = [
 ]
 
 
-def _call_with_retries(adapter, sample: Sample, pace: bool, retries: int) -> AsrResult:
+def _call_with_retries(adapter, sample: Sample, pace: bool, retries: int,
+                       phrases: tuple[str, ...] = (),
+                       phrase_weight: float = 1.0) -> AsrResult:
     last_err: str | None = None
     for attempt in range(retries + 1):
         try:
-            res: AsrResult = adapter(sample, pace=pace)
+            kwargs = {"pace": pace}
+            if phrases and adapter is not transcribe_whisper_v3:
+                kwargs.update(phrases=phrases, phrase_weight=phrase_weight)
+            res: AsrResult = adapter(sample, **kwargs)
             if res.error and attempt < retries:
                 last_err = res.error
                 time.sleep(1.5 * (attempt + 1))
@@ -103,11 +110,14 @@ def _to_row(sample: Sample, res: AsrResult) -> dict:
 
 
 def _run_sample(sample: Sample, services: tuple[str, ...], pace: bool,
-                retries: int, words_writer=None) -> list[dict]:
+                retries: int, words_writer=None,
+                phrases: tuple[str, ...] = (),
+                phrase_weight: float = 1.0) -> list[dict]:
     rows: list[dict] = []
 
     if "realtime" in services:
-        res = _call_with_retries(transcribe_realtime, sample, pace, retries)
+        res = _call_with_retries(transcribe_realtime, sample, pace, retries,
+                     phrases, phrase_weight)
         if not res.error:
             anchored_first, anchored_last, fix_meta = boundary_fix.decide(
                 sample.reference, res.hypothesis, res.words)
@@ -140,13 +150,15 @@ def _run_sample(sample: Sample, services: tuple[str, ...], pace: bool,
         rows.append(_to_row(sample, res))
 
     if "realtime_refine" in services:
-        res = _call_with_retries(transcribe_realtime_refine, sample, pace, retries)
+        res = _call_with_retries(transcribe_realtime_refine, sample, pace, retries,
+                     phrases, phrase_weight)
         rows.append(_to_row(sample, res))
 
     fast_services = [s for s in services if s not in ("realtime", "realtime_refine")]
     if fast_services:
         with ThreadPoolExecutor(max_workers=len(fast_services)) as pool:
-            futs = {pool.submit(_call_with_retries, ADAPTERS[s], sample, pace, retries): s
+            futs = {pool.submit(_call_with_retries, ADAPTERS[s], sample, pace, retries,
+                                phrases, phrase_weight): s
                     for s in fast_services}
             for fut in as_completed(futs):
                 rows.append(_to_row(sample, fut.result()))
@@ -168,7 +180,9 @@ def _load_done(csv_path: Path) -> set[tuple[str, str, str]]:
 def run_benchmark(samples: list[Sample], csv_path: Path,
                   services: tuple[str, ...] = SERVICES,
                   workers: int = 8, pace: bool = True,
-                  retries: int = 2, sequential: bool = False) -> Path:
+                  retries: int = 2, sequential: bool = False,
+                  phrases: tuple[str, ...] = (),
+                  phrase_weight: float = 1.0) -> Path:
     csv_path.parent.mkdir(parents=True, exist_ok=True)
     done = _load_done(csv_path)
     new_file = not csv_path.exists()
@@ -207,10 +221,12 @@ def run_benchmark(samples: list[Sample], csv_path: Path,
     try:
         if sequential or workers <= 1:
             for s in tqdm(pending_samples, desc="benchmark"):
-                write_rows(_run_sample(s, services, pace, retries, words_writer))
+                write_rows(_run_sample(s, services, pace, retries, words_writer,
+                                       phrases, phrase_weight))
         else:
             with ThreadPoolExecutor(max_workers=workers) as pool:
-                futs = [pool.submit(_run_sample, s, services, pace, retries, words_writer)
+                futs = [pool.submit(_run_sample, s, services, pace, retries, words_writer,
+                            phrases, phrase_weight)
                         for s in pending_samples]
                 for fut in tqdm(as_completed(futs), total=len(futs), desc="benchmark"):
                     write_rows(fut.result())
