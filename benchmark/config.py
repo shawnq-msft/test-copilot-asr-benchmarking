@@ -1,5 +1,5 @@
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from urllib.parse import urlparse
 
 from dotenv import load_dotenv
@@ -19,6 +19,8 @@ REFINE_AZURE_KEY = os.getenv("REFINE_AZURE_SPEECH_KEY") or AZURE_SPEECH_KEY
 REFINE_AZURE_ENDPOINT = ((os.getenv("REFINE_AZURE_SPEECH_ENDPOINT") or "").rstrip("/")
                          or AZURE_SPEECH_ENDPOINT)
 REFINE_AZURE_REGION = os.getenv("REFINE_AZURE_SPEECH_REGION") or AZURE_SPEECH_REGION
+
+MAI_STREAMING_MODEL = "mai-transcribe-2-streaming"
 
 FAST_API_VERSION = "2024-11-15"
 LLM_API_VERSION = "2025-10-15"
@@ -42,8 +44,16 @@ SERVICES = (
     "fast_mai_2",
     "realtime",
     "realtime_refine",
+    "realtime_mai_2",
     "whisper_v3",
 )
+
+STREAMING_SERVICES = ("realtime", "realtime_refine", "realtime_mai_2")
+DEFAULT_SERVICES = tuple(service for service in SERVICES if service != "fast_mai")
+
+# Speech regions documentation, verified 2026-10-10. Used for warnings, not routing.
+ENHANCED_REST_REGIONS = ("centralindia", "eastus", "northeurope", "southeastasia", "westus", "westus2")
+MAI_STREAMING_REGIONS = ("swedencentral", "centralus", "eastus2", "southeastasia")
 
 
 def rest_base_url() -> str:
@@ -82,6 +92,7 @@ class Sample:
     duration_s: float
     first_word_start_s: float | None = None
     last_word_end_s: float | None = None
+    boundary_fix: dict | None = None
 
 
 @dataclass
@@ -101,10 +112,22 @@ class AsrResult:
     words: list[dict] | None = None
     boundary_fix: dict | None = None
     vad_truncated_s: float | None = None
+    streaming_evidence: dict | None = None
 
 
-def assert_credentials():
-    if not AZURE_SPEECH_KEY:
-        raise SystemExit("AZURE_SPEECH_KEY must be set in .env (see .env.example)")
-    if not AZURE_SPEECH_ENDPOINT and not AZURE_SPEECH_REGION:
-        raise SystemExit("AZURE_SPEECH_ENDPOINT or AZURE_SPEECH_REGION must be set in .env")
+def assert_credentials(services: tuple[str, ...] = DEFAULT_SERVICES) -> None:
+    for service in services:
+        if service not in SERVICES:
+            raise ValueError(f"Unknown service: {service}")
+        if service == "whisper_v3":
+            continue
+        if service == "realtime_refine":
+            key, endpoint, region = REFINE_AZURE_KEY, REFINE_AZURE_ENDPOINT, REFINE_AZURE_REGION
+        elif service in ("fast_llm", "fast_mai", "fast_mai_1_5", "fast_mai_2"):
+            key, endpoint, region = LLM_AZURE_KEY, LLM_AZURE_ENDPOINT, LLM_AZURE_REGION
+        else:
+            key, endpoint, region = AZURE_SPEECH_KEY, AZURE_SPEECH_ENDPOINT, AZURE_SPEECH_REGION
+        if not key or key == "your_speech_key_here":
+            raise ValueError(f"{service}: configure a Speech resource key in .env (see .env.example)")
+        if not endpoint and not region:
+            raise ValueError(f"{service}: configure a Speech endpoint or region in .env")

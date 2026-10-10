@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import csv
+import json
 from collections import Counter, defaultdict
 from pathlib import Path
 
@@ -9,6 +10,7 @@ from .config import (AZURE_SPEECH_ENDPOINT, AZURE_SPEECH_REGION,
                      FAST_API_VERSION, LLM_API_VERSION,
                      SEGMENTATION_SILENCE_MS,
                      REFINE_AZURE_ENDPOINT, REFINE_AZURE_REGION,
+                     MAI_STREAMING_MODEL, STREAMING_SERVICES,
                      llm_rest_base_url, llm_rest_host, rest_base_url, rest_host)
 from .metrics import aggregate
 from .ping import public_ip_and_location, tcp_ping_ms
@@ -88,6 +90,17 @@ def _endpoints_for_locale(locale: str) -> dict[str, dict]:
                      "Falls back to non-MRS behavior if PostProcessingOption is not set."),
             "doc": "https://learn.microsoft.com/en-us/azure/ai-services/speech-service/how-to-recognize-speech",
         },
+        "realtime_mai_2": {
+            "name": "MAI-Transcribe-2-Streaming (public preview)",
+            "url": AZURE_SPEECH_ENDPOINT or f"SDK region: {AZURE_SPEECH_REGION}",
+            "transport": "Azure Speech SDK >=1.52.0, continuous PushAudioInputStream",
+            "config": f'SpeechConfig.model="{MAI_STREAMING_MODEL}"',
+            "partials": "yes (recognizing/recognized events)",
+            "note": ("No explicit language, phrase grammar, segmentation, or detailed-word options "
+                     "are set: these capabilities are not established by the SDK model guide. "
+                     "Uses baseline speech boundaries when available; absent word timing is not fabricated."),
+            "doc": "https://learn.microsoft.com/en-us/azure/ai-services/speech-service/mai-transcribe-2-streaming-speech-sdk",
+        },
         "whisper_v3": {
             "name": "Azure Fast Transcription — Whisper large-v3 (stub)",
             "url": f"{_REST_BASE}?api-version={FAST_API_VERSION}",
@@ -130,6 +143,15 @@ def build_report(csv_path: Path, md_path: Path, tag: str = "") -> None:
 
     title = tag if tag else csv_path.stem
     lines = [f"# ASR Benchmark — {title}", ""]
+    metadata_path = csv_path.with_name(csv_path.stem + "_run.json")
+    if metadata_path.exists():
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        lines.append(f"Real-time pacing: **{metadata['pace']}**. "
+                     + ("Latency comparisons require trustworthy shared speech anchors."
+                        if metadata["pace"] else
+                        "**Unpaced run: do not use these numbers for latency comparisons.**"))
+    else:
+        lines.append("Pacing provenance is unavailable (legacy artifact); verify the run command before latency comparisons.")
     lines.append(f"Total rows: **{len(rows)}**  ")
     lines.append(f"Tester public IP: **{ip_str}**  ")
     lines.append(f"Tester location: **{loc_str}**" + (f" ({org_str})" if org_str else "") + "  ")
@@ -146,7 +168,7 @@ def build_report(csv_path: Path, md_path: Path, tag: str = "") -> None:
     endpoints = _endpoints_for_locale(locale)
     lines.append("## Endpoints under test")
     lines.append("")
-    services_in_run = [s for s in ("fast_default", "fast_llm", "fast_mai", "fast_mai_1_5", "fast_mai_2", "realtime", "realtime_refine", "whisper_v3")
+    services_in_run = [s for s in endpoints
                        if any(r["service"] == s for r in rows)]
     for svc in services_in_run:
         e = endpoints[svc]
@@ -196,7 +218,7 @@ def build_report(csv_path: Path, md_path: Path, tag: str = "") -> None:
         sub_total = sum(int(r["sub"]) for r in ok if r.get("sub") not in ("", None))
         ref_total = sum(int(r["ref_len"]) for r in ok if r.get("ref_len") not in ("", None))
 
-        if svc in ("realtime", "realtime_refine"):
+        if svc in STREAMING_SERVICES:
             fl = [float(r["first_latency_ms"]) for r in ok if r["first_latency_ms"] not in ("", None)]
         else:
             fl = []
@@ -223,7 +245,10 @@ def build_report(csv_path: Path, md_path: Path, tag: str = "") -> None:
     # Speech boundaries
     lines.append("## Speech boundaries")
     lines.append("")
-    lines.append("`speech_start_s` / `speech_end_s` (CSV columns) come from the realtime SDK's word-level timestamps and anchor UPL for all services. The full per-word log lives in the sidecar `" + csv_path.with_name(csv_path.stem + "_words.jsonl").name + "` (one JSON object per realtime sample).")
+    lines.append("`speech_start_s` / `speech_end_s` are shared baseline realtime boundaries where available. "
+                 "Check `upl_anchor`: self-derived values are not shared-anchor comparisons. "
+                 "The sidecar `" + csv_path.with_name(csv_path.stem + "_words.jsonl").name +
+                 "` contains service-tagged streaming evidence and available words. Legacy entries without a service are baseline realtime.")
     lines.append("")
     realtime_rows = [r for r in rows if r["service"] == "realtime"]
     fixed_rows = [r for r in realtime_rows
@@ -244,9 +269,11 @@ def build_report(csv_path: Path, md_path: Path, tag: str = "") -> None:
             se = r.get("speech_end_s", "") or "-"
             lines.append(f"| {r['dataset']} | {r['sample_id']} | {r['boundary_fix_action']} | {ss} | {se} |")
         lines.append("")
-    else:
+    elif realtime_rows:
         lines.append("All realtime samples passed the boundary-fix heuristic without trimming.")
         lines.append("")
+    else:
+        lines.append("No baseline realtime boundary checks were available.")
 
     # Latency definitions
     lines.append("## Latency definitions (all values in ms)")
@@ -289,6 +316,7 @@ def build_report(csv_path: Path, md_path: Path, tag: str = "") -> None:
     lines.append(f"- **VAD truncation**: when realtime ran first and produced word timestamps, fast_* audio is truncated at `speech_end + {SEGMENTATION_SILENCE_MS} ms` to simulate a VAD cutting the stream after end-of-speech. The CSV column `vad_truncated_s` records the truncated duration.")
     lines.append("")
     lines.append("**Other:**")
+    lines.append("- **realtime_mai_2** uses the same first-partial/LBL definitions. First latency and UPL use baseline boundaries when available; otherwise they require returned model word timestamps. Missing metrics are unavailable, not zero. `upl_self_ms` is retained separately.")
     lines.append("- WER/SER use NFKC + lowercase + punctuation stripping normalization.")
     lines.append("- Per-sample WER is capped at 1.0 in aggregation.")
 

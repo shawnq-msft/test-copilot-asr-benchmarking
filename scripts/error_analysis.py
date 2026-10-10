@@ -20,17 +20,8 @@ from rapidfuzz.distance import Levenshtein
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from benchmark.datasets_loader import iter_samples, write_pcm16_wav  # noqa: E402
 from benchmark.metrics import aggregate, normalize_text  # noqa: E402
+from benchmark.config import SERVICES as ALL_KNOWN_SERVICES, STREAMING_SERVICES  # noqa: E402
 
-ALL_KNOWN_SERVICES = (
-    "fast_default",
-    "fast_llm",
-    "fast_mai",
-    "fast_mai_1_5",
-    "fast_mai_2",
-    "realtime",
-    "realtime_refine",
-    "whisper_v3",
-)
 
 
 def wer_calc(ref: str, hyp: str) -> float:
@@ -112,7 +103,8 @@ def main(csv_path: Path, out_path: Path) -> None:
             rows.append(r)
 
     services_in_csv = sorted({r["service"] for r in rows})
-    SERVICES = tuple(s for s in ALL_KNOWN_SERVICES if s in services_in_csv) or tuple(services_in_csv)
+    SERVICES = tuple(s for s in ALL_KNOWN_SERVICES if s in services_in_csv)
+    SERVICES += tuple(s for s in services_in_csv if s not in SERVICES)
 
     by_sample: dict[tuple[str, str], dict[str, dict]] = defaultdict(dict)
     for r in rows:
@@ -154,14 +146,12 @@ def main(csv_path: Path, out_path: Path) -> None:
     for key in all_keys:
         ds, sid = key
         svcmap = by_sample[key]
-        if "fast_default" in svcmap and "realtime" in svcmap:
-            try:
-                fw = min(float(svcmap["fast_default"]["wer"]), 1.0)
-                rw = min(float(svcmap["realtime"]["wer"]), 1.0)
-            except ValueError:
-                continue
-            top_diffs.append((abs(fw - rw), ds, sid, svcmap, fw, rw))
-    top_diffs.sort(reverse=True)
+        scored = [(min(float(row["wer"]), 1.0), service)
+                  for service, row in svcmap.items() if not row["error"] and row["wer"] != ""]
+        if len(scored) >= 2:
+            best, worst = min(scored), max(scored)
+            top_diffs.append((worst[0] - best[0], ds, sid, svcmap, best, worst))
+    top_diffs.sort(key=lambda item: (item[0], item[1], item[2]), reverse=True)
     for _, ds, sid, _, _, _ in top_diffs[:10]:
         needed.add((ds, sid))
 
@@ -202,6 +192,8 @@ def main(csv_path: Path, out_path: Path) -> None:
         sers = [int(r["sentence_error"]) for r in ok if r["sentence_error"] != ""]
         ll = [float(r["lbl_ms"]) for r in ok if r["lbl_ms"] not in ("", None)]
         upl = [float(r["upl_ms"]) for r in ok if r.get("upl_ms") not in ("", None)]
+        fl = [float(r["first_latency_ms"]) for r in ok
+              if r["service"] in STREAMING_SERVICES and r.get("first_latency_ms") not in ("", None)]
         ins_rate, del_rate, sub_rate = _agg_breakdown(ok)
         return {
             "n": len(rs),
@@ -211,6 +203,7 @@ def main(csv_path: Path, out_path: Path) -> None:
             "ins": ins_rate, "del": del_rate, "sub": sub_rate,
             "lbl": aggregate(ll),
             "upl": aggregate(upl),
+            "first": aggregate(fl),
         }
 
     lines: list[str] = []
@@ -237,23 +230,27 @@ def main(csv_path: Path, out_path: Path) -> None:
                   if r.get("boundary_fix_action") and r["boundary_fix_action"] != "none"]
     lines.append("## Speech boundaries")
     lines.append("")
-    lines.append("`speech_start_s` / `speech_end_s` come from the realtime SDK's word-level timestamps and anchor UPL for all services.")
+    lines.append("Shared `speech_start_s` / `speech_end_s` come from baseline realtime when available. "
+                 "Check each row's `upl_anchor`; self or missing anchors do not support shared-anchor comparisons. "
+                 "Check the report/run metadata for pacing before interpreting latency.")
     lines.append("")
     if fixed_rows:
         action_counts = Counter(r["boundary_fix_action"] for r in fixed_rows)
         lines.append(f"Boundary-fix actions across {len(realtime_rows)} realtime samples: " +
                      ", ".join(f"`{a}`={n}" for a, n in sorted(action_counts.items())))
         lines.append("")
-    else:
+    elif realtime_rows:
         lines.append("All realtime samples passed the boundary-fix heuristic without trimming.")
         lines.append("")
+    else:
+        lines.append("No baseline realtime boundary checks were available.")
 
     lines.append("## Results")
     lines.append("")
     lines.append("INS/DEL/SUB are *rates per 100 reference words*. Their sum ≈ WER × 100.")
     lines.append("")
-    lines.append("| Dataset | Service | N | WER | SER | INS/100 | DEL/100 | SUB/100 | LBL ms (mean / p90) | UPL ms (mean / p90) |")
-    lines.append("|---|---|---:|---:|---:|---:|---:|---:|---|---|")
+    lines.append("| Dataset | Service | N | Errors | WER | SER | INS/100 | DEL/100 | SUB/100 | First Latency ms (mean / p90) | LBL ms (mean / p90) | UPL ms (mean / p90) |")
+    lines.append("|---|---|---:|---:|---:|---:|---:|---:|---:|---|---|---|")
     for ds in datasets_seen:
         for svc in SERVICES:
             rs = by_key.get((ds, svc), [])
@@ -263,8 +260,21 @@ def main(csv_path: Path, out_path: Path) -> None:
             lbl = m["lbl"]; upl = m["upl"]
             lbl_s = f"{lbl['mean']:.0f} / {lbl['p90']:.0f}" if lbl["n"] else "-"
             upl_s = f"{upl['mean']:.0f} / {upl['p90']:.0f}" if upl["n"] else "-"
-            lines.append(f"| {ds} | {svc} | {m['n']} | {wer_s} | {ser_s} | {m['ins']} | {m['del']} | {m['sub']} | {lbl_s} | {upl_s} |")
+            first = m["first"]
+            first_s = f"{first['mean']:.0f} / {first['p90']:.0f}" if first["n"] else "-"
+            lines.append(f"| {ds} | {svc} | {m['n']} | {m['errs']} | {wer_s} | {ser_s} | {m['ins']} | {m['del']} | {m['sub']} | {first_s} | {lbl_s} | {upl_s} |")
     lines.append("")
+    lines.append("## Best / median / worst by dataset and service\n")
+    for (dataset, service), group in sorted(by_key.items()):
+        scored_rows = sorted((row for row in group if not row["error"] and row["wer"] != ""),
+                             key=lambda row: (float(row["wer"]), row["sample_id"]))
+        if scored_rows:
+            lines.append(f"### {dataset} / {service}")
+            for label, row in (("Best", scored_rows[0]), ("Median", scored_rows[len(scored_rows) // 2]),
+                               ("Worst", scored_rows[-1])):
+                lines.append(f"- {label}: `{row['sample_id']}` WER={row['wer']}; "
+                             f"ref: `{row['reference']}`; hyp: `{row['hypothesis']}`")
+            lines.append("")
 
     lines.append("## Worst errors\n")
     lines.append(f"Top {len(worst_rows)} highest-WER rows across all services:\n")
@@ -304,25 +314,25 @@ def main(csv_path: Path, out_path: Path) -> None:
             lines.append(f"| {link} | {ds} | {sid} | {wer_s} | {fix} | `{ref}` | `{hyp}` |")
         lines.append("")
 
-    lines.append("## Top fast_default vs realtime disagreements\n")
+    lines.append("## Top cross-service disagreements\n")
     if not top_diffs:
         lines.append("_(none)_\n")
     else:
-        for delta, ds, sid, svcmap, fw, rw in top_diffs[:10]:
+        for delta, ds, sid, svcmap, best, worst in top_diffs[:10]:
             link = _audio_link(out_dir, ds, sid, audio_cache, samples_by_key)
             rt = svcmap.get("realtime", {})
             ss = rt.get("speech_start_s", "") or "-"
             se = rt.get("speech_end_s", "") or "-"
             fix = rt.get("boundary_fix_action", "") or "-"
-            lines.append(f"### {ds}/{sid}{link}  Δwer={delta:.3f}  (fast_default={fw:.3f}, realtime={rw:.3f})  speech=[{ss}s, {se}s] fix={fix}")
-            lines.append(f"- ref:           `{svcmap['fast_default'].get('reference','')}`")
+            lines.append(f"### {ds}/{sid}{link}  Δwer={delta:.3f}  ({best[1]}={best[0]:.3f}, {worst[1]}={worst[0]:.3f})  speech=[{ss}s, {se}s] fix={fix}")
+            lines.append(f"- ref:           `{svcmap[best[1]].get('reference','')}`")
             for s in SERVICES:
                 if s in svcmap:
                     lines.append(f"- {s:<14} `{svcmap[s].get('hypothesis','')}`")
             lines.append("")
 
     lines.append("## Caveats\n")
-    lines.append("- **UPL is anchored on the realtime SDK's word-end timestamp** for each sample, so all services use the same `speech_end`. The CSV's `upl_self_ms` column has each service's own phrase-derived value if you want to see how its boundary detection differs.")
+    lines.append("- **Shared UPL requires a trustworthy baseline realtime anchor.** MAI-only runs may have no speech-anchored metrics. Missing metrics are not zero; inspect `upl_anchor` and `upl_self_ms`.")
     lines.append("- **Voice commands are short utterances** (typically 3-10 words). WER on short references is noisier — a single word error on a 4-word command gives 25% WER. Interpret per-sample WER with this in mind.")
 
     out_path.write_text("\n".join(lines), encoding="utf-8")
@@ -333,4 +343,14 @@ def main(csv_path: Path, out_path: Path) -> None:
 
 
 if __name__ == "__main__":
-    main(Path(sys.argv[1]), Path(sys.argv[2]))
+    import argparse
+    import benchmark.datasets_loader as loader
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("csv_path", type=Path)
+    parser.add_argument("out_path", type=Path)
+    parser.add_argument("--testdata-dir", type=Path)
+    args = parser.parse_args()
+    if args.testdata_dir:
+        loader.DATA_ROOT = args.testdata_dir
+    main(args.csv_path, args.out_path)

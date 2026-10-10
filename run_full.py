@@ -2,14 +2,16 @@
 from __future__ import annotations
 
 import argparse
+import json
 import time
 from pathlib import Path
 
-from benchmark.config import LOCALES, SERVICES, assert_credentials
-from benchmark.datasets_loader import list_datasets, iter_samples
+from benchmark.config import DEFAULT_SERVICES, LOCALES, SERVICES, assert_credentials
 import benchmark.datasets_loader as _loader
 from benchmark.report import build_report
 from benchmark.runner import run_benchmark
+from scripts.validate_benchmark import (check_selection, check_resume, collect_samples,
+                                        make_metadata, metadata_path, validate_artifacts)
 
 
 def main():
@@ -31,7 +33,7 @@ Examples:
   python run_full.py --testdata-dir /path/to/myaudio --tag myproject
 """,
     )
-    p.add_argument("--languages", nargs="*", default=list(LOCALES),
+    p.add_argument("--languages", nargs="+", default=list(LOCALES),
                    help="Locales to benchmark (default: all in LOCALES config). "
                         "Example: --languages en-GB de-DE")
     p.add_argument("--max-per-dataset", type=int, default=30,
@@ -40,9 +42,9 @@ Examples:
                    help="Thread pool size for parallel samples (default: 4)")
     p.add_argument("--no-pace", action="store_true",
                    help="Skip real-time pacing — runs faster but latency numbers are unrealistic")
-    p.add_argument("--services", nargs="*", default=list(SERVICES),
-                   help="Services to benchmark (default: all). "
-                        "Example: --services fast_default fast_mai_1_5 fast_mai_2 realtime")
+    p.add_argument("--services", nargs="+", choices=SERVICES, default=list(DEFAULT_SERVICES),
+                   help="Services to benchmark (default: configured services except retired fast_mai). "
+                        "Example: --services fast_default fast_mai_2 realtime realtime_mai_2")
     p.add_argument("--resume", type=str, default=None,
                    help="Path to an existing CSV to resume from (skips already-completed rows)")
     p.add_argument("--tag", type=str, default="asr-bench",
@@ -63,7 +65,16 @@ Examples:
     if not 0.0 <= args.phrase_weight <= 2.0:
         p.error("--phrase-weight must be between 0.0 and 2.0")
 
-    assert_credentials()
+    try:
+        warnings = check_selection(args.services, args.languages, args.max_per_dataset,
+                                   args.workers, args.phrase_list)
+        assert_credentials(tuple(args.services))
+    except ValueError as exc:
+        p.error(str(exc))
+    for warning in warnings:
+        print(f"[warning] {warning}")
+    if args.resume and len(args.languages) != 1:
+        p.error("--resume requires exactly one --languages locale")
 
     # Override DATA_ROOT if --testdata-dir was given
     if args.testdata_dir:
@@ -86,33 +97,34 @@ Examples:
             csv_path = output_dir / f"{args.tag}_{lang}_{ts}.csv"
         md_path = csv_path.with_name(csv_path.stem + "_report.md")
 
-        datasets = list_datasets(lang)
-        if not datasets:
-            print(f"[skip] no datasets found for {lang} under {_loader.DATA_ROOT}")
-            print(f"       Run: python scripts/generate_testset.py --locale {lang}")
-            continue
-        print(f"[load] datasets: {datasets}")
+        try:
+            samples = collect_samples([lang], args.max_per_dataset, args.seed)
+            metadata = make_metadata(samples, args.services, pace=not args.no_pace,
+                                     seed=args.seed, limit=args.max_per_dataset,
+                                     workers=args.workers, phrases=args.phrase_list,
+                                     phrase_weight=args.phrase_weight)
+            if args.resume:
+                check_resume(csv_path, metadata)
+            elif csv_path.exists() or metadata_path(csv_path).exists():
+                raise ValueError(f"Output already exists: {csv_path}; choose a new --tag")
+            else:
+                metadata_path(csv_path).write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+        except (ValueError, OSError) as exc:
+            p.error(str(exc))
 
-        samples = []
-        for ds in datasets:
-            try:
-                ds_samples = iter_samples(ds, limit=args.max_per_dataset, seed=args.seed)
-                print(f"  {ds}: {len(ds_samples)} samples")
-                samples.extend(ds_samples)
-            except FileNotFoundError as e:
-                print(f"  [skip] {ds}: {e}")
-
-        if not samples:
-            print(f"[skip] no samples loaded for {lang}")
-            continue
-
-        active_services = tuple(s for s in args.services if s in SERVICES)
+        active_services = tuple(args.services)
         print(f"[run] {len(samples)} samples × {len(active_services)} services, workers={args.workers}")
         run_benchmark(samples, csv_path, services=active_services,
                       workers=args.workers, pace=not args.no_pace, retries=2,
                       sequential=(args.workers <= 1),
                       phrases=tuple(args.phrase_list),
                       phrase_weight=args.phrase_weight)
+        validation = validate_artifacts(csv_path, require_reports=False)
+        validation_path = csv_path.with_name(csv_path.stem + "_validation.json")
+        validation_path.write_text(json.dumps(validation, indent=2), encoding="utf-8")
+        if not validation["ok"]:
+            print(json.dumps(validation, indent=2))
+            raise SystemExit(f"Benchmark validation failed; partial results preserved at {csv_path}")
         build_report(csv_path, md_path, tag=f"{args.tag}_{lang}")
         print(f"\nCSV:    {csv_path}")
         print(f"Report: {md_path}")
@@ -121,6 +133,11 @@ Examples:
         ea_path = csv_path.with_name(csv_path.stem + "_error_analysis.md")
         error_main(csv_path, ea_path)
         print(f"Error analysis: {ea_path}")
+        validation = validate_artifacts(csv_path)
+        validation_path.write_text(json.dumps(validation, indent=2), encoding="utf-8")
+        if not validation["ok"]:
+            raise SystemExit(f"Artifact validation failed; see {validation_path}")
+        print(f"Validation: {validation_path}")
 
 
 if __name__ == "__main__":

@@ -31,13 +31,14 @@ from __future__ import annotations
 
 import argparse
 import os
-import re
+import random
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from dotenv import load_dotenv
+from benchmark.datasets_loader import _load_trans
 
 load_dotenv()
 
@@ -63,31 +64,8 @@ DEFAULT_VOICES: dict[str, str] = {
 DATA_ROOT = Path(__file__).resolve().parents[1] / "testdata"
 
 
-def _sanitize_filename(text: str) -> str:
-    """Convert reference text to a safe WAV filename stem (max 70 chars)."""
-    s = text.lower()
-    s = re.sub(r"['''\u2019\u2018]", "", s)
-    s = re.sub(r"[^\w\s]", "", s)
-    s = re.sub(r"\s+", "_", s.strip())
-    s = re.sub(r"_+", "_", s)
-    return s[:70].rstrip("_")
-
-
 def _read_trans(trans_path: Path) -> list[tuple[str, str]]:
-    """Return (filename, reference_text) pairs from trans.txt."""
-    entries: list[tuple[str, str]] = []
-    text = trans_path.read_text(encoding="utf-8-sig")
-    for line in text.strip().splitlines():
-        line = line.strip()
-        if not line or line.startswith("#"):
-            continue
-        parts = line.split("\t", 1)
-        if len(parts) == 2:
-            entries.append((parts[0], parts[1]))
-        else:
-            fn = _sanitize_filename(line) + ".wav"
-            entries.append((fn, line))
-    return entries
+    return _load_trans(trans_path)
 
 
 def _synthesize(text: str, voice: str, out_path: Path) -> bool:
@@ -96,7 +74,7 @@ def _synthesize(text: str, voice: str, out_path: Path) -> bool:
         import azure.cognitiveservices.speech as speechsdk
     except ImportError:
         print("ERROR: azure-cognitiveservices-speech not installed.")
-        print("       Run: pip install azure-cognitiveservices-speech>=1.49.0")
+        print("       Run: python -m pip install -r requirements.txt")
         return False
 
     speech_config = speechsdk.SpeechConfig(
@@ -124,17 +102,18 @@ def _synthesize(text: str, voice: str, out_path: Path) -> bool:
     return False
 
 
-def process_dataset(locale: str, dataset: str, voice: str, force: bool = False) -> None:
+def process_dataset(locale: str, dataset: str, voice: str, force: bool = False,
+                    limit: int = 0, seed: int = 42) -> None:
     ds_dir = DATA_ROOT / locale / dataset
     trans_path = ds_dir / "trans.txt"
     if not trans_path.exists():
-        print(f"[skip] {locale}/{dataset}: no trans.txt found at {trans_path}")
-        return
+        raise ValueError(f"No trans.txt found at {trans_path}; custom recordings are not synthesized")
 
     entries = _read_trans(trans_path)
     if not entries:
-        print(f"[skip] {locale}/{dataset}: trans.txt is empty")
-        return
+        raise ValueError(f"Empty reference file: {trans_path}")
+    if limit and len(entries) > limit:
+        entries = random.Random(seed).sample(entries, limit)
 
     print(f"\n[{locale}/{dataset}] synthesizing {len(entries)} entries (voice={voice})")
     n_ok = n_skip = n_fail = 0
@@ -154,6 +133,8 @@ def process_dataset(locale: str, dataset: str, voice: str, force: bool = False) 
     if n_fail:
         status += f", {n_fail} FAILED"
     print(f"[{locale}/{dataset}] done: {status}")
+    if n_fail:
+        raise RuntimeError(f"{locale}/{dataset}: {n_fail} TTS failures; validate audio before benchmarking")
 
 
 def main() -> None:
@@ -168,7 +149,21 @@ def main() -> None:
                    help="Azure TTS neural voice name. Defaults to the locale's default voice.")
     p.add_argument("--force", action="store_true",
                    help="Re-synthesize WAVs even if they already exist.")
+    p.add_argument("--testdata-dir", type=Path, help="Custom testdata root")
+    p.add_argument("--max-per-dataset", type=int, default=0,
+                   help="Select the same sample subset as the benchmark (default: 0, all)")
+    p.add_argument("--seed", type=int, default=42, help="Match the benchmark's subsampling seed")
     args = p.parse_args()
+    global DATA_ROOT
+    if args.testdata_dir:
+        DATA_ROOT = args.testdata_dir
+    if args.dataset and not args.locale:
+        p.error("--dataset requires --locale")
+    if args.max_per_dataset < 0:
+        p.error("--max-per-dataset must be >=0")
+    selected_locales = [args.locale] if args.locale else [p.name for p in DATA_ROOT.iterdir() if p.is_dir()]
+    if not args.voice and any(locale not in DEFAULT_VOICES for locale in selected_locales):
+        p.error("No default TTS voice for a selected locale; supply --voice explicitly")
 
     if not AZURE_SPEECH_KEY:
         print("ERROR: AZURE_SPEECH_KEY not set.")
@@ -177,7 +172,7 @@ def main() -> None:
 
     if args.locale and args.dataset:
         voice = args.voice or DEFAULT_VOICES.get(args.locale, "en-US-JennyNeural")
-        process_dataset(args.locale, args.dataset, voice, args.force)
+        process_dataset(args.locale, args.dataset, voice, args.force, args.max_per_dataset, args.seed)
 
     elif args.locale:
         locale_dir = DATA_ROOT / args.locale
@@ -187,7 +182,7 @@ def main() -> None:
         voice = args.voice or DEFAULT_VOICES.get(args.locale, "en-US-JennyNeural")
         for ds_dir in sorted(locale_dir.iterdir()):
             if ds_dir.is_dir():
-                process_dataset(args.locale, ds_dir.name, voice, args.force)
+                process_dataset(args.locale, ds_dir.name, voice, args.force, args.max_per_dataset, args.seed)
 
     else:
         if not DATA_ROOT.exists():
@@ -200,7 +195,7 @@ def main() -> None:
             voice = args.voice or DEFAULT_VOICES.get(locale, "en-US-JennyNeural")
             for ds_dir in sorted(locale_dir.iterdir()):
                 if ds_dir.is_dir():
-                    process_dataset(locale, ds_dir.name, voice, args.force)
+                    process_dataset(locale, ds_dir.name, voice, args.force, args.max_per_dataset, args.seed)
 
 
 if __name__ == "__main__":

@@ -1,6 +1,7 @@
 ---
 name: asr-justify
-description: Read an ASR benchmark CSV (and its auto-generated report, error analysis, and word-timing sidecar) and write a subjective-justification markdown file that interprets the numbers across all configured services, including MAI-Transcribe-1.5 and MAI-Transcribe-2, flags dataset/scoring artifacts, and surfaces concrete best/median/worst and cross-service disagreement cases. Manual invocation only.
+description: Explicitly justify a selected ASR benchmark CSV and matching evidence, including MAI-Transcribe-2-Streaming, with measured rankings, scoring caveats, latency QA, and concrete cross-service cases. Manual invocation only.
+disable-model-invocation: true
 ---
 
 # asr-justify
@@ -10,7 +11,7 @@ report is arithmetic; this skill writes the interpretation.
 
 ## Inputs
 
-The benchmark covers **seven Azure service configurations** (plus an optional Whisper stub):
+Derive the services present from the CSV, not a fixed expected count. Known configurations:
 
 - `fast_default` — Azure Fast Transcription (api-version `2024-11-15`). Locale-locked.
 - `fast_llm` — Azure Fast Transcription with `enhancedMode.enabled=true`
@@ -28,15 +29,21 @@ The benchmark covers **seven Azure service configurations** (plus an optional Wh
 - `realtime` — Speech SDK continuous recognition with PushAudioInputStream.
 - `realtime_refine` — Realtime with PostProcessingOption=PostRefinement
   (MRS Public Preview, Speech SDK 1.49.0+).
+- `realtime_mai_2` — MAI-Transcribe-2-Streaming through Speech SDK >=1.52.0.
+  No explicit locale/phrase/segmentation/detailed-word settings are applied.
+  Uses baseline realtime speech anchors when available; without trustworthy
+  word timing, speech-anchored first latency/UPL are unavailable, not zero.
 
-Per run, four artifacts live under `results/`:
+Per-run artifacts live under the selected output directory:
 
 | File | Contents |
 |---|---|
 | `<run>.csv` | Per-sample, per-service results. Columns include `wer`, `sentence_error`, `ins`, `del`, `sub`, `ref_len`, `first_latency_ms`, `lbl_ms`, `upl_ms`, `upl_self_ms`, `upl_anchor`, `speech_start_s`, `speech_end_s`, `boundary_fix_action`, `first_word_start_s`, `last_word_end_s`, `error`, `locale`. |
 | `<run>_report.md` | Auto-generated headline aggregate table, dataset / endpoint sections, latency definitions, and a Speech-boundary section listing trimmed samples. |
 | `<run>_error_analysis.md` | Produced by `scripts/error_analysis.py`: results table, best/median/worst per (dataset, service), fast_llm hallucination list, top cross-service disagreements, with `[▶]` audio links. All samples included (no filtering). |
-| `<run>_words.jsonl` | One JSON object per realtime sample: full word-level timestamps + the boundary-fix decision. Read this when investigating any sample whose `boundary_fix_action != "none"`. |
+| `<run>_words.jsonl` | Service-tagged streaming entries, available words, IDs, boundary decisions and partial/final completion evidence. Legacy entries without `service` are baseline realtime. |
+| `<run>_run.json` | Selected services/sample keys, data root, SDK, and pacing. Absence means legacy provenance is unknown. |
+| `<run>_validation.json` | Structural/service errors, coverage verification, and warnings. Check against current artifacts; do not trust a stale validation file. |
 | `<run>.csv.strict` | (Created by `scripts/loose_match.py`.) Backup of the CSV before loose-match normalization was applied. Compare against the main CSV to see which rows were corrected. |
 
 The user typically invokes this as: *"justify results/<run>.csv"*. If
@@ -50,7 +57,8 @@ by replacing `.csv` with `_report.md` / `_error_analysis.md`.
    rows, the fast_llm hallucination list, and the top cross-service
    disagreements. Most narrative content should come from this file — the
    auto report is just sums. All samples are included (no filtering).
-3. **Latency QA pass.** For every row check the three latency values
+3. **Latency QA pass.** Check pacing first. Do not make latency comparisons
+   for unpaced runs; disclose unknown legacy provenance. For every row check the three latency values
    (`first_latency_ms`, `lbl_ms`, `upl_ms`) against `boundary_fix_action`
    and reasonability:
    - **`boundary_fix_action == "skip"`** → realtime's own UPL is suspect
@@ -63,7 +71,8 @@ by replacing `.csv` with `_report.md` / `_error_analysis.md`.
      whose `|upl_ms|` exceeds 2× that p90, OR whose `upl_ms` is
      negative by more than ~200 ms, is a candidate to drop from the
      headline aggregate.
-   - **First-latency outliers** — only meaningful for `realtime`. If
+   - **First-latency outliers** — only meaningful for streaming services with
+     trustworthy speech-start anchors. If
      `first_latency_ms` is negative or > 2× p90 of clean rows, the
      `first_word_start_s` anchor was probably wrong. Note in the
      justification which sample(s) and exclude from the headline.
@@ -90,16 +99,17 @@ by replacing `.csv` with `_report.md` / `_error_analysis.md`.
 7. **Write the justification** to `results/<run>_justification.md`. Skeleton:
 
    - **Headline numbers (recap)** — copy the aggregate table
-     from the error analysis (same as `_report.md` — both use
-     all samples with loose-match normalization applied).
+     from the error analysis (same scoring state as `_report.md`). State whether
+     these are strict or loose scores; normalization is not guaranteed.
    - **One-line take** — which service wins on accuracy, which on
      latency, and the single biggest caveat.
    - **Where the WER numbers are misleading** — explicitly call out:
      - Empty-hypothesis rows. Quote ref + each service's hypothesis.
      - Short-ref samples where a single word error causes high WER
        (e.g., 25% on a 4-word command).
-     - Stylistic deltas (punctuation, casing) that inflate WER without
-       representing recognition error. Quote 3-4 median rows side-by-side.
+     - Stylistic differences: scoring already removes punctuation/casing.
+       Do not attribute scored errors to differences removed by normalization.
+       Quote 3-4 median rows side-by-side when available.
      - Compound-word / segmentation artifacts caught by loose matching.
        Quote examples and cite both strict and loose WER when the gap
        is meaningful.
@@ -108,10 +118,9 @@ by replacing `.csv` with `_report.md` / `_error_analysis.md`.
        if uncorrected.
    - **fast_llm hallucinations** — the error analysis lists samples where
      `fast_llm` WER ≥ 0.8 with ≤ 1 word overlap with the reference.
-     Summarize the count per dataset, note that most correlate with
-     `boundary_fix_action=skip` (poor audio/edge case), and highlight
-     the language confusion pattern (fast_llm has no locale set and may
-     recognize audio in the wrong language).
+     Summarize the count per dataset and test any correlation with
+     `boundary_fix_action=skip`; do not assume it. Discuss language confusion
+     only when supported by the actual hypotheses.
    - **Where the services genuinely disagree** — summarize the residue
      after setting aside the above artifacts.
    - **INS / DEL / SUB shape** — the breakdown columns reveal *what kind*
@@ -121,9 +130,9 @@ by replacing `.csv` with `_report.md` / `_error_analysis.md`.
      - High DEL rate → engine drops words. Common when audio is fast or
        low-confidence.
      - High SUB rate → engine recognized a word but picked the wrong one.
-   - **Latency** — interpret the gap. fast_default is fastest;
-     fast_llm/fast_mai/fast_mai_1_5/fast_mai_2 add LLM/MAI inference time; realtime's UPL is
-     dominated by trailing-silence flush. First-latency is omitted for
+   - **Latency** — derive rankings from measured, comparable rows; do not
+     predetermine a winner or infer model-internal timing from wall-clock latency.
+     Include `realtime_mai_2` when measured. First-latency is omitted for
      REST endpoints because response = first token. **Use the QA-passed
      numbers** (rows excluded by the latency QA pass should not appear
      in headline mean/p90 claims; cite them by ID in a "QA notes"
@@ -161,15 +170,17 @@ These patterns may appear when benchmarking smart speaker or in-car commands:
 
 ## Anchored UPL — what to know
 
-All non-realtime services compute UPL against the **realtime SDK's** word-level
-`speech_end`, not their own returned phrase boundaries. This is what
-makes UPL comparable across services.
+REST services and `realtime_mai_2` can use the baseline **realtime SDK's**
+word-level `speech_end` when available. `realtime_refine` retains its own
+word-derived timing; do not assume its legacy `upl_anchor="realtime"` label
+establishes a shared baseline anchor. Confirm per-row timing sources.
 
 - `upl_ms` is the anchored value (what the report uses).
 - `upl_self_ms` keeps each service's own phrase-derived UPL for
   diagnostics.
-- `upl_anchor` is `"realtime"` when the realtime row succeeded for that
-  sample, or `"self"` when it didn't (fallback).
+- For REST and MAI streaming, `upl_anchor` is `"realtime"` when a trustworthy
+  baseline boundary exists, `"self"` for model-derived fallback, or blank when
+  unavailable. Successful recognition alone does not establish an anchor.
 - `boundary_fix_action` records whether the realtime word list itself
   was trimmed before being used as the anchor:
   - `"none"` — anchor used as-is.
@@ -177,9 +188,10 @@ makes UPL comparable across services.
     looked hallucinated; anchor advanced inward by one word.
   - `"skip"` — anchor judged unreliable; fast_* fell back to self.
 
-If a justification cites a specific UPL number, glance at
-`upl_anchor` for that row first — anchored numbers are comparable, self
-fallback numbers are not.
+If a justification cites a specific UPL number, check pacing and the actual
+anchor source first. Keep raw aggregate tables separate from any QA-filtered
+latency table, with excluded IDs and reasons; do not silently change denominators.
+Never discard an outlier merely to improve a model's ranking.
 
 ## Loose matching pipeline
 

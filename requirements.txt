@@ -4,4 +4,4 @@ numpy
 soundfile
 rapidfuzz
 tqdm
-azure-cognitiveservices-speech>=1.49.0
+azure-cognitiveservices-speech>=1.52.0

@@ -13,9 +13,10 @@ from . import boundary_fix
 from .asr_fast import transcribe_fast_default
 from .asr_llm_speech import (transcribe_fast_llm, transcribe_fast_mai,
                              transcribe_fast_mai_1_5, transcribe_fast_mai_2)
-from .asr_realtime import transcribe_realtime, transcribe_realtime_refine
+from .asr_realtime import (transcribe_realtime, transcribe_realtime_refine,
+                           transcribe_realtime_mai_2)
 from .asr_whisper import transcribe_whisper_v3
-from .config import SERVICES, AsrResult, Sample
+from .config import DEFAULT_SERVICES, STREAMING_SERVICES, AsrResult, Sample
 from .metrics import wer, wer_breakdown, sentence_error
 
 ADAPTERS = {
@@ -26,6 +27,7 @@ ADAPTERS = {
     "fast_mai_2": transcribe_fast_mai_2,
     "realtime": transcribe_realtime,
     "realtime_refine": transcribe_realtime_refine,
+    "realtime_mai_2": transcribe_realtime_mai_2,
     "whisper_v3": transcribe_whisper_v3,
 }
 
@@ -115,6 +117,20 @@ def _run_sample(sample: Sample, services: tuple[str, ...], pace: bool,
                 phrase_weight: float = 1.0) -> list[dict]:
     rows: list[dict] = []
 
+    def record_streaming(res: AsrResult) -> None:
+        if words_writer is None:
+            return
+        words_writer({
+            **_to_row(sample, res),
+            "words": res.words or [],
+            "raw_first_word_start_s": res.first_word_start_s,
+            "raw_last_word_end_s": res.last_word_end_s,
+            "anchored_first_word_start_s": sample.first_word_start_s,
+            "anchored_last_word_end_s": sample.last_word_end_s,
+            "boundary_fix": sample.boundary_fix,
+            "streaming_evidence": res.streaming_evidence,
+        })
+
     if "realtime" in services:
         res = _call_with_retries(transcribe_realtime, sample, pace, retries,
                      phrases, phrase_weight)
@@ -124,37 +140,19 @@ def _run_sample(sample: Sample, services: tuple[str, ...], pace: bool,
             sample.first_word_start_s = anchored_first
             sample.last_word_end_s = anchored_last
             sample.boundary_fix = fix_meta
-            if words_writer is not None:
-                bd = wer_breakdown(sample.reference, res.hypothesis)
-                ref_len = max(bd["ref_len"], 1)
-                wer_val = (bd["ins"] + bd["dele"] + bd["sub"]) / ref_len
-                words_writer({
-                    "dataset": sample.dataset,
-                    "sample_id": sample.sample_id,
-                    "reference": sample.reference,
-                    "hypothesis": res.hypothesis,
-                    "wer": round(wer_val, 4),
-                    "ins": bd["ins"], "del": bd["dele"], "sub": bd["sub"],
-                    "ref_len": bd["ref_len"],
-                    "words": res.words or [],
-                    "raw_first_word_start_s": res.first_word_start_s,
-                    "raw_last_word_end_s": res.last_word_end_s,
-                    "anchored_first_word_start_s": anchored_first,
-                    "anchored_last_word_end_s": anchored_last,
-                    "boundary_fix": fix_meta,
-                    "request_id": res.request_id,
-                    "session_id": res.session_id,
-                })
         else:
             sample.boundary_fix = {"action": "skip", "reason": f"realtime error: {res.error}"}
+        record_streaming(res)
         rows.append(_to_row(sample, res))
 
-    if "realtime_refine" in services:
-        res = _call_with_retries(transcribe_realtime_refine, sample, pace, retries,
-                     phrases, phrase_weight)
-        rows.append(_to_row(sample, res))
+    for service in STREAMING_SERVICES:
+        if service != "realtime" and service in services:
+            res = _call_with_retries(ADAPTERS[service], sample, pace, retries,
+                                     phrases, phrase_weight)
+            record_streaming(res)
+            rows.append(_to_row(sample, res))
 
-    fast_services = [s for s in services if s not in ("realtime", "realtime_refine")]
+    fast_services = [s for s in services if s not in STREAMING_SERVICES]
     if fast_services:
         with ThreadPoolExecutor(max_workers=len(fast_services)) as pool:
             futs = {pool.submit(_call_with_retries, ADAPTERS[s], sample, pace, retries,
@@ -178,14 +176,18 @@ def _load_done(csv_path: Path) -> set[tuple[str, str, str]]:
 
 
 def run_benchmark(samples: list[Sample], csv_path: Path,
-                  services: tuple[str, ...] = SERVICES,
+                  services: tuple[str, ...] = DEFAULT_SERVICES,
                   workers: int = 8, pace: bool = True,
                   retries: int = 2, sequential: bool = False,
                   phrases: tuple[str, ...] = (),
                   phrase_weight: float = 1.0) -> Path:
     csv_path.parent.mkdir(parents=True, exist_ok=True)
+    if not services or any(service not in ADAPTERS for service in services):
+        raise ValueError("Select at least one known service")
+    if csv_path.with_suffix(".csv.strict").exists():
+        raise ValueError("Cannot resume a normalized CSV; use a fresh run")
     done = _load_done(csv_path)
-    new_file = not csv_path.exists()
+    new_file = not csv_path.exists() or csv_path.stat().st_size == 0
     lock = threading.Lock()
     words_lock = threading.Lock()
 
@@ -193,6 +195,17 @@ def run_benchmark(samples: list[Sample], csv_path: Path,
         s for s in samples
         if not all((s.dataset, s.sample_id, svc) in done for svc in services)
     ]
+    if done:
+        by_key = {(sample.dataset, sample.sample_id): sample for sample in pending_samples}
+        with csv_path.open(encoding="utf-8", newline="") as existing:
+            for row in csv.DictReader(existing):
+                sample = by_key.get((row["dataset"], row["sample_id"]))
+                if sample is not None and row["service"] == "realtime":
+                    sample.first_word_start_s = (float(row["speech_start_s"])
+                                                 if row.get("speech_start_s") else None)
+                    sample.last_word_end_s = (float(row["speech_end_s"])
+                                              if row.get("speech_end_s") else None)
+                    sample.boundary_fix = {"action": row.get("boundary_fix_action", "")}
 
     f = csv_path.open("a", encoding="utf-8", newline="")
     writer = csv.DictWriter(f, fieldnames=CSV_FIELDS)
@@ -201,7 +214,15 @@ def run_benchmark(samples: list[Sample], csv_path: Path,
         f.flush()
 
     words_path = csv_path.with_name(csv_path.stem + "_words.jsonl")
-    words_f = words_path.open("a", encoding="utf-8") if "realtime" in services else None
+    words_f = (words_path.open("a", encoding="utf-8")
+               if any(service in STREAMING_SERVICES for service in services) else None)
+    words_done: set[tuple[str, str, str]] = set()
+    if words_path.exists():
+        with words_path.open(encoding="utf-8") as existing_words:
+            for line in existing_words:
+                entry = json.loads(line)
+                words_done.add((entry["dataset"], entry["sample_id"],
+                                entry.get("service", "realtime")))
 
     def write_rows(rows: list[dict]):
         with lock:
@@ -215,19 +236,25 @@ def run_benchmark(samples: list[Sample], csv_path: Path,
         if words_f is None:
             return
         with words_lock:
+            key = (obj["dataset"], obj["sample_id"], obj["service"])
+            if key in words_done:
+                return
             words_f.write(json.dumps(obj, ensure_ascii=False) + "\n")
             words_f.flush()
+            words_done.add(key)
+
+    def run_pending(sample: Sample) -> list[dict]:
+        pending = tuple(service for service in services
+                        if (sample.dataset, sample.sample_id, service) not in done)
+        return _run_sample(sample, pending, pace, retries, words_writer, phrases, phrase_weight)
 
     try:
         if sequential or workers <= 1:
             for s in tqdm(pending_samples, desc="benchmark"):
-                write_rows(_run_sample(s, services, pace, retries, words_writer,
-                                       phrases, phrase_weight))
+                write_rows(run_pending(s))
         else:
             with ThreadPoolExecutor(max_workers=workers) as pool:
-                futs = [pool.submit(_run_sample, s, services, pace, retries, words_writer,
-                            phrases, phrase_weight)
-                        for s in pending_samples]
+                futs = [pool.submit(run_pending, s) for s in pending_samples]
                 for fut in tqdm(as_completed(futs), total=len(futs), desc="benchmark"):
                     write_rows(fut.result())
     finally:

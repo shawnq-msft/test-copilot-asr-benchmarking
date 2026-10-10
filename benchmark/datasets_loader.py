@@ -83,7 +83,7 @@ def _load_from_wavs(directory: Path) -> list[tuple[str, str]]:
 
 
 def iter_samples(dataset: str, limit: int | None = 30,
-                 seed: int = 42) -> list[Sample]:
+                 seed: int = 42, *, strict: bool = False) -> list[Sample]:
     """Load audio samples for a dataset identifier like 'en-GB_smart-commands'.
 
     Args:
@@ -118,7 +118,7 @@ def iter_samples(dataset: str, limit: int | None = 30,
             pairs = _load_from_wavs(d)
         for filename, reference in pairs:
             wav_path = d / filename
-            if wav_path.exists():
+            if wav_path.exists() or strict:
                 all_entries.append((wav_path, reference, f"{d.name}/{filename}"))
 
     if not all_entries:
@@ -133,12 +133,18 @@ def iter_samples(dataset: str, limit: int | None = 30,
 
     samples = []
     for wav_path, reference, sample_id in all_entries:
+        if strict and not wav_path.is_file():
+            raise FileNotFoundError(f"Missing referenced audio: {wav_path}")
         try:
             pcm, duration = load_audio_as_pcm16_mono_16k(str(wav_path))
         except Exception as e:
+            if strict:
+                raise ValueError(f"Cannot decode {wav_path}: {e}") from e
             print(f"[skip] {wav_path}: {e}")
             continue
         if duration < 0.2:
+            if strict:
+                raise ValueError(f"Audio shorter than 0.2 seconds: {wav_path}")
             continue
         samples.append(Sample(
             sample_id=sample_id,
