@@ -18,8 +18,8 @@ Derive the services present from the CSV, not a fixed expected count. Known conf
   (LLM Speech preview, api-version `2025-10-15`). **No locale set** —
   relies on auto-detection, which causes language confusion errors
   (e.g., German or French audio recognized as English).
-- `fast_mai` — Azure Fast Transcription with
-  `enhancedMode.model="mai-transcribe-1"` and per-language locale.
+- Historical `fast_mai` rows refer to retired MAI-Transcribe-1. The adapter has
+  been removed; interpret existing evidence only and do not recommend rerunning it.
 - `fast_mai_1_5` — Azure Fast Transcription with
   `enhancedMode.model="MAI-Transcribe-1.5"` and per-language locale.
 - `fast_mai_2` — Azure Fast Transcription with

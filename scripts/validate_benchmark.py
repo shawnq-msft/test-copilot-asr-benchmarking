@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import hashlib
 import math
 import os
 import sys
@@ -18,6 +19,15 @@ from benchmark import datasets_loader as loader
 from benchmark import config
 from benchmark.config import DEFAULT_SERVICES, LOCALES, SERVICES, STREAMING_SERVICES, Sample, assert_credentials
 from benchmark.runner import CSV_FIELDS
+from benchmark.eval_options import EvaluationOptions, add_evaluation_arguments, options_from_args
+from benchmark.evaluation import evaluation_path, variant_id
+from benchmark.annotation_metrics import SCORING_VERSION, speaker_agreement, language_scores, describe_segments
+from benchmark.metrics import cer_breakdown, normalize_characters
+
+
+def row_key(row: dict, metadata: dict | None) -> tuple:
+    key = (row["dataset"], row["sample_id"], row.get("service", "realtime"))
+    return key + (row.get("variant_id", ""),) if metadata and metadata.get("schema_version") == 2 else key
 
 
 def metadata_path(csv_path: Path) -> Path:
@@ -54,13 +64,16 @@ def check_selection(services: list[str], languages: list[str], limit: int,
             raise ValueError("realtime_mai_2 requires Speech SDK >=1.52.0; install requirements.txt")
         if phrases:
             raise ValueError("Phrase lists are not verified for realtime_mai_2; remove --phrase-list")
+    if "realtime_mai_2_api" in services:
+        from benchmark.asr_mai_realtime_api import realtime_url, session_update
+        realtime_url(config.MAI_REALTIME_ENDPOINT)
+        session_update(config.MAI_REALTIME_DEPLOYMENT)
+        if phrases:
+            raise ValueError("Phrase lists are not enabled for realtime_mai_2_api")
     warnings = []
     if "whisper_v3" in services:
         warnings.append("whisper_v3 is a stub and will fail; choose an explicit subset to exclude it")
-    if "fast_mai" in services:
-        warnings.append("fast_mai selects retired MAI-Transcribe-1 and is expected to fail; "
-                        "it is retained only for explicit legacy diagnostics")
-    enhanced = set(services) & {"fast_llm", "fast_mai", "fast_mai_1_5", "fast_mai_2"}
+    enhanced = set(services) & {"fast_llm", "fast_mai_1_5", "fast_mai_2"}
     if enhanced and config.LLM_AZURE_REGION not in config.ENHANCED_REST_REGIONS:
         warnings.append(
             f"REST enhanced mode is not documented in configured region {config.LLM_AZURE_REGION!r}; "
@@ -78,9 +91,12 @@ def check_selection(services: list[str], languages: list[str], limit: int,
 
 def make_metadata(samples: list[Sample], services: list[str], *, pace: bool,
                   seed: int, limit: int, workers: int,
-                  phrases: list[str], phrase_weight: float) -> dict:
-    return {
-        "schema_version": 1,
+                  phrases: list[str], phrase_weight: float, chunk_ms: int = 100,
+                  evaluation_options: EvaluationOptions | None = None) -> dict:
+    if evaluation_options is not None:
+        loader.prepare_evaluation(samples, services, evaluation_options, phrases=phrases)
+    metadata = {
+        "schema_version": 2 if evaluation_options is not None else 1,
         "created_utc": datetime.now(timezone.utc).isoformat(),
         "python": sys.executable,
         "speech_sdk": version("azure-cognitiveservices-speech"),
@@ -93,9 +109,30 @@ def make_metadata(samples: list[Sample], services: list[str], *, pace: bool,
         "workers": workers,
         "phrases": phrases,
         "phrase_weight": phrase_weight,
+        "chunk_ms": chunk_ms,
+        "speech_region": config.AZURE_SPEECH_REGION,
+        "speech_endpoint": config.AZURE_SPEECH_ENDPOINT,
+        "mai_realtime_endpoint": config.MAI_REALTIME_ENDPOINT,
+        "mai_realtime_deployment": config.MAI_REALTIME_DEPLOYMENT,
         "expected_keys": [[sample.dataset, sample.sample_id, service]
                           for sample in samples for service in services],
     }
+    if evaluation_options is not None:
+        metadata["evaluation"] = {
+            "options": evaluation_options.to_dict(), "scoring_version": SCORING_VERSION,
+            "character_scoring": "nfkc-lower-punctuation-and-whitespace-removed-v1",
+            "primary_metric": "cer" if all(s.locale.startswith(("zh-", "yue-")) for s in samples) else "wer",
+            "samples": [{"dataset": s.dataset, "sample_id": s.sample_id, "locale": s.locale,
+                         "reference_available": s.reference_available, "manifest_hash": s.manifest_hash,
+                         "manifest_path": s.manifest_path, "audio_path": s.audio_path,
+                         "pcm_sha256": hashlib.sha256(s.pcm16_mono_16k).hexdigest(),
+                         "reference_sha256": hashlib.sha256(json.dumps(
+                             [s.reference if s.reference_available else None, s.reference_segments or [],
+                              s.reference_language, s.scenario],
+                             sort_keys=True).encode()).hexdigest()} for s in samples]}
+        metadata["expected_keys"] = [[s.dataset, s.sample_id, service, variant_id(s, service)]
+                                     for s in samples for service in services]
+    return metadata
 
 
 def check_resume(csv_path: Path, metadata: dict) -> None:
@@ -106,10 +143,18 @@ def check_resume(csv_path: Path, metadata: dict) -> None:
     saved_path = metadata_path(csv_path)
     if saved_path.exists():
         saved = json.loads(saved_path.read_text(encoding="utf-8"))
+        if saved.get("schema_version") != metadata.get("schema_version") or saved.get("evaluation") != metadata.get("evaluation"):
+            raise ValueError("Resume evaluation mode, input/reference hashes or schema differs; use a fresh run")
         for field in ("data_root", "services", "languages", "pace", "seed",
                       "max_per_dataset", "phrases", "phrase_weight", "expected_keys"):
             if saved.get(field) != metadata[field]:
                 raise ValueError(f"Resume selection differs in {field}; use a fresh run")
+        if saved.get("chunk_ms", 100) != metadata.get("chunk_ms", 100):
+            raise ValueError("Resume chunk size differs; use a fresh run")
+        for field in ("speech_region", "speech_endpoint", "mai_realtime_endpoint",
+                      "mai_realtime_deployment"):
+            if field in saved and saved[field] != metadata[field]:
+                raise ValueError(f"Resume resource differs in {field}; use a fresh run")
     else:
         raise ValueError("Legacy resume has no run metadata; use a fresh run to ensure selection/pacing consistency")
     expected = {tuple(key) for key in metadata["expected_keys"]}
@@ -117,16 +162,21 @@ def check_resume(csv_path: Path, metadata: dict) -> None:
         reader = csv.DictReader(source)
         if reader.fieldnames != CSV_FIELDS:
             raise ValueError("Resume CSV schema does not match this runner")
-        keys = [(row["dataset"], row["sample_id"], row["service"]) for row in reader]
+        keys = [row_key(row, metadata) for row in reader]
     if len(set(keys)) != len(keys) or not set(keys) <= expected:
         raise ValueError("Resume CSV contains duplicate or unexpected sample/service rows")
     words_path = csv_path.with_name(csv_path.stem + "_words.jsonl")
     if words_path.exists():
         entries = [json.loads(line) for line in words_path.read_text(encoding="utf-8").splitlines() if line]
-        word_keys = [(entry["dataset"], entry["sample_id"], entry.get("service", "realtime"))
-                     for entry in entries]
+        word_keys = [row_key(entry, metadata) for entry in entries]
         if len(set(word_keys)) != len(word_keys) or not set(word_keys) <= set(keys):
             raise ValueError("Resume sidecar is inconsistent with CSV; preserve evidence and start a fresh run")
+    if metadata.get("schema_version") == 2:
+        path = evaluation_path(csv_path)
+        entries = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()] if path.exists() else []
+        eval_keys = [row_key(entry, metadata) for entry in entries]
+        if Counter(eval_keys) != Counter(keys):
+            raise ValueError("Resume evaluation evidence is inconsistent with CSV; use a fresh run")
 
 
 def validate_artifacts(csv_path: Path, *, require_reports: bool = True,
@@ -140,7 +190,7 @@ def validate_artifacts(csv_path: Path, *, require_reports: bool = True,
         expected_keys = metadata["expected_keys"]
         if (not isinstance(metadata["pace"], bool) or not isinstance(expected_keys, list)
                 or not expected_keys
-                or any(not isinstance(key, list) or len(key) != 3
+                or any(not isinstance(key, list) or len(key) != (4 if metadata.get("schema_version") == 2 else 3)
                        or any(not isinstance(part, str) or not part for part in key)
                        for key in expected_keys)):
             raise ValueError("Invalid run metadata: expected nonempty sample/service keys and boolean pacing")
@@ -157,7 +207,7 @@ def validate_artifacts(csv_path: Path, *, require_reports: bool = True,
         if not required <= set(reader.fieldnames or []):
             raise ValueError("CSV lacks required identity/scoring columns")
         rows = list(reader)
-    keys = [(row["dataset"], row["sample_id"], row["service"]) for row in rows]
+    keys = [row_key(row, metadata) for row in rows]
     counts = Counter(keys)
     if not rows:
         errors.append("CSV contains no results")
@@ -180,6 +230,10 @@ def validate_artifacts(csv_path: Path, *, require_reports: bool = True,
             continue
         for field in ("wer", "sentence_error", "ins", "del", "sub", "ref_len"):
             value = row.get(field, "")
+            if row.get("reference_available") == "false" and metadata and metadata.get("schema_version") == 2:
+                if value not in ("", None):
+                    errors.append(f"{key}: no-reference row contains a score")
+                continue
             try:
                 number = float(value)
                 valid = math.isfinite(number) and number >= 0
@@ -199,6 +253,24 @@ def validate_artifacts(csv_path: Path, *, require_reports: bool = True,
                         raise ValueError
                 except (TypeError, ValueError):
                     errors.append(f"{key}: invalid {field}")
+        if metadata and metadata.get("evaluation", {}).get("character_scoring"):
+            if row.get("locale", "").startswith(("zh-", "yue-")) and row.get("reference_available") != "false":
+                expected_ser = int(normalize_characters(row["reference"]) != normalize_characters(row["hypothesis"]))
+                if row.get("sentence_error") != str(expected_ser):
+                    errors.append(f"{key}: character-normalized sentence_error mismatch")
+            expected_chars = (cer_breakdown(row["reference"], row["hypothesis"])
+                              if row.get("reference_available") != "false" else
+                              dict.fromkeys(("cer", "char_ins", "char_del", "char_sub", "ref_chars"), ""))
+            for field, expected_value in expected_chars.items():
+                try:
+                    if expected_value == "":
+                        valid = row.get(field) == ""
+                    else:
+                        valid = math.isclose(float(row[field]), expected_value, rel_tol=1e-9)
+                    if not valid:
+                        raise ValueError
+                except (ValueError, KeyError, TypeError):
+                    errors.append(f"{key}: invalid character score {field}")
         if row["service"] in STREAMING_SERVICES and not row.get("upl_ms"):
             warnings.append(f"{key}: speech-anchored UPL unavailable")
     words_path = csv_path.with_name(csv_path.stem + "_words.jsonl")
@@ -208,8 +280,7 @@ def validate_artifacts(csv_path: Path, *, require_reports: bool = True,
         (warnings if allow_legacy else errors).append("Missing streaming evidence sidecar")
     if words_path.exists():
         entries = [json.loads(line) for line in words_path.read_text(encoding="utf-8").splitlines() if line]
-        word_keys = [(entry["dataset"], entry["sample_id"], entry.get("service", "realtime"))
-                     for entry in entries]
+        word_keys = [row_key(entry, metadata) for entry in entries]
         if len(set(word_keys)) != len(word_keys):
             errors.append("Duplicate streaming evidence keys")
         if set(word_keys) - streaming:
@@ -220,15 +291,57 @@ def validate_artifacts(csv_path: Path, *, require_reports: bool = True,
             if not isinstance(entry.get("words"), list):
                 errors.append("Streaming evidence words must be a list")
             evidence = entry.get("streaming_evidence")
-            entry_key = (entry["dataset"], entry["sample_id"], entry.get("service", "realtime"))
+            entry_key = row_key(entry, metadata)
             row = rows_by_key.get(entry_key)
             if row is not None and (row.get("error") or "") != (entry.get("error") or ""):
                 errors.append(f"{entry_key}: CSV and sidecar disagree on service error")
-            if not entry.get("error") and entry.get("service") == "realtime_mai_2":
+            if not entry.get("error") and entry.get("service") in ("realtime_mai_2", "realtime_mai_2_api"):
                 if not evidence or not evidence.get("completed") or not evidence.get("final_count"):
                     errors.append("Successful MAI row lacks completed final evidence")
                 elif evidence.get("audio_bytes_sent") != evidence.get("audio_bytes_expected"):
                     errors.append("Successful MAI row did not send all expected audio bytes")
+    if metadata and metadata.get("schema_version") == 2:
+        path = evaluation_path(csv_path)
+        entries = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()] if path.exists() else []
+        if Counter(row_key(e, metadata) for e in entries) != Counter(keys):
+            errors.append("Evaluation evidence coverage differs from CSV")
+        references = {(s["dataset"], s["sample_id"]): s for s in metadata["evaluation"]["samples"]}
+        for entry in entries:
+            key = row_key(entry, metadata)
+            row = rows_by_key.get(key)
+            ref = references.get((entry["dataset"], entry["sample_id"]))
+            if row is None or ref is None:
+                continue
+            if (entry.get("options") != metadata["evaluation"]["options"]
+                    or entry.get("scoring_version") != metadata["evaluation"]["scoring_version"]
+                    or entry.get("pcm_sha256") != ref["pcm_sha256"]
+                    or entry.get("reference_available") != ref["reference_available"]
+                    or hashlib.sha256(json.dumps([entry.get("reference"), entry.get("reference_segments"),
+                                                  entry.get("reference_language"), entry.get("scenario")],
+                                                 sort_keys=True).encode()).hexdigest() != ref["reference_sha256"]
+                    or row.get("reference_available") != str(ref["reference_available"]).lower()
+                    or row.get("language_mode") != entry["options"]["language_mode"]
+                    or row.get("lid_strategy") != (entry["options"]["lid_strategy"] or "")
+                    or row.get("hypothesis") != entry.get("hypothesis")
+                    or entry.get("description") != describe_segments(entry["segments"])
+                    or (row.get("error") or None) != entry.get("error")):
+                errors.append(f"{key}: evaluation configuration/evidence mismatch")
+            if not entry.get("error"):
+                if entry["options"]["score_wder"]:
+                    expected_score = speaker_agreement(entry["reference_segments"], entry["segments"])
+                    if entry.get("wder") != expected_score:
+                        errors.append(f"{key}: invalid wDER score")
+                elif entry.get("wder") is not None:
+                    errors.append(f"{key}: wDER present without scoring request")
+                if entry["lid"].get("status") == "detected_language_unavailable":
+                    warnings.append(f"{key}: detected language labels unavailable; no LID accuracy claim")
+                if entry["options"]["diarization"] and not entry["description"]["speakers"]:
+                    warnings.append(f"{key}: final speaker IDs unavailable")
+                expected_lid = language_scores(
+                    entry["reference_language"] if entry["scenario"] == "single-language" else None,
+                    entry["reference_segments"], entry["segments"], entry["options"]["lid_strategy"])
+                if expected_lid != entry.get("lid"):
+                    errors.append(f"{key}: invalid LID scores")
     if require_reports:
         for suffix in ("_report.md", "_error_analysis.md"):
             report = csv_path.with_name(csv_path.stem + suffix)
@@ -238,7 +351,7 @@ def validate_artifacts(csv_path: Path, *, require_reports: bool = True,
     if strict_path.exists():
         with strict_path.open(encoding="utf-8", newline="") as source:
             strict_rows = list(csv.DictReader(source))
-        strict_keys = [(row["dataset"], row["sample_id"], row["service"]) for row in strict_rows]
+        strict_keys = [row_key(row, metadata) for row in strict_rows]
         if Counter(strict_keys) != counts:
             errors.append("Strict backup row identities differ from normalized CSV")
         immutable = ("reference", "hypothesis", "error", "request_id", "session_id",
@@ -267,10 +380,12 @@ def main() -> int:
     preflight.add_argument("--workers", type=int, default=4)
     preflight.add_argument("--seed", type=int, default=42)
     preflight.add_argument("--no-pace", action="store_true")
+    preflight.add_argument("--chunk-ms", type=int, default=100)
     preflight.add_argument("--testdata-dir", type=Path)
     preflight.add_argument("--output-dir", type=Path, default=Path("results"))
     preflight.add_argument("--phrase-list", nargs="*", default=[])
     preflight.add_argument("--phrase-weight", type=float, default=1.0)
+    add_evaluation_arguments(preflight)
     artifacts = commands.add_parser("artifacts")
     artifacts.add_argument("csv_path", type=Path)
     artifacts.add_argument("--rows-only", action="store_true")
@@ -278,6 +393,9 @@ def main() -> int:
     args = parser.parse_args()
     try:
         if args.command == "preflight":
+            options = options_from_args(args)
+            if args.chunk_ms <= 0:
+                raise ValueError("--chunk-ms must be positive")
             if not 0.0 <= args.phrase_weight <= 2.0:
                 raise ValueError("--phrase-weight must be between 0.0 and 2.0")
             if args.testdata_dir:
@@ -285,7 +403,12 @@ def main() -> int:
             warnings = check_selection(args.services, args.languages, args.max_per_dataset,
                                        args.workers, args.phrase_list)
             assert_credentials(tuple(args.services))
-            samples = collect_samples(args.languages, args.max_per_dataset, args.seed)
+            if args.manifest and any(arg.split("=")[0] in ("--languages", "--testdata-dir", "--max-per-dataset")
+                                     for arg in sys.argv[1:]):
+                raise ValueError("--manifest is an exact selection; do not combine with locale/root/limit flags")
+            samples = (loader.load_manifest(Path(args.manifest)) if args.manifest else
+                       collect_samples(args.languages, args.max_per_dataset, args.seed))
+            loader.prepare_evaluation(samples, args.services, options, phrases=args.phrase_list)
             output_parent = args.output_dir.resolve()
             while not output_parent.exists():
                 output_parent = output_parent.parent
@@ -294,7 +417,8 @@ def main() -> int:
             result = {"ok": True, "samples": len(samples), "expected_rows": len(samples) * len(args.services),
                       "warnings": warnings, "authentication_verified": False,
                       "speech_sdk": version("azure-cognitiveservices-speech"),
-                      "pace": not args.no_pace}
+                      "pace": not args.no_pace, "chunk_ms": args.chunk_ms,
+                      "evaluation_options": options.to_dict()}
         else:
             result = validate_artifacts(args.csv_path, require_reports=not args.rows_only,
                                         allow_legacy=args.allow_legacy)

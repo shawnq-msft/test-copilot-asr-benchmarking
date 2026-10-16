@@ -11,6 +11,7 @@ from .config import (AZURE_SPEECH_ENDPOINT, AZURE_SPEECH_REGION,
                      SEGMENTATION_SILENCE_MS,
                      REFINE_AZURE_ENDPOINT, REFINE_AZURE_REGION,
                      MAI_STREAMING_MODEL, STREAMING_SERVICES,
+                     MAI_REALTIME_ENDPOINT, MAI_REALTIME_DEPLOYMENT,
                      llm_rest_base_url, llm_rest_host, rest_base_url, rest_host)
 from .metrics import aggregate
 from .ping import public_ip_and_location, tcp_ping_ms
@@ -40,15 +41,6 @@ def _endpoints_for_locale(locale: str) -> dict[str, dict]:
             "partials": "no",
             "note": "Requires Speech resource with LLM-Speech preview enabled. No locale set — relies on auto-detection.",
             "doc": "https://learn.microsoft.com/en-us/azure/ai-services/speech-service/llm-speech",
-        },
-        "fast_mai": {
-            "name": "Azure Fast Transcription — MAI model (preview)",
-            "url": f"{_LLM_REST_BASE}?api-version={LLM_API_VERSION}",
-            "transport": "HTTPS POST (multipart/form-data, chunked)",
-            "config": f'definition = {{"locales": ["{locale_short}"], "enhancedMode": {{"enabled": true, "model": "mai-transcribe-1"}}}}',
-            "partials": "no",
-            "note": "Requires Speech resource with mai-transcribe-1 preview enabled.",
-            "doc": "https://learn.microsoft.com/en-us/azure/ai-services/speech-service/mai-transcribe",
         },
         "fast_mai_1_5": {
             "name": "Azure Fast Transcription — MAI 1.5 model (preview)",
@@ -101,6 +93,18 @@ def _endpoints_for_locale(locale: str) -> dict[str, dict]:
                      "Uses baseline speech boundaries when available; absent word timing is not fabricated."),
             "doc": "https://learn.microsoft.com/en-us/azure/ai-services/speech-service/mai-transcribe-2-streaming-speech-sdk",
         },
+        "realtime_mai_2_api": {
+            "name": "MAI-Transcribe-2-Streaming via Realtime API (opt-in preview)",
+            "url": MAI_REALTIME_ENDPOINT + "/mai/v1/realtime?intent=transcription",
+            "transport": "WebSocket, PCM16 base64 audio, explicit end-of-recording commit",
+            "config": f"deployment={MAI_REALTIME_DEPLOYMENT}, 16 kHz mono, language auto-detection",
+            "partials": "yes (intermediate and finalized delta events)",
+            "note": ("Uses the same resource key as SDK but its documented MAI Realtime endpoint and "
+                     "a deployed model. First latency is first nonempty intermediate; first-text and "
+                     "setup timing are also in the sidecar. No automatic turn detection. "
+                     "Do not confuse faster explicit commit with SDK overhead."),
+            "doc": "https://learn.microsoft.com/en-us/azure/ai-services/speech-service/mai-transcribe-2-streaming-realtime",
+        },
         "whisper_v3": {
             "name": "Azure Fast Transcription — Whisper large-v3 (stub)",
             "url": f"{_REST_BASE}?api-version={FAST_API_VERSION}",
@@ -114,6 +118,10 @@ def _endpoints_for_locale(locale: str) -> dict[str, dict]:
 
 
 def build_report(csv_path: Path, md_path: Path, tag: str = "") -> None:
+    from .evaluation import evaluation_path, build_evaluation_report
+    if evaluation_path(csv_path).exists():
+        build_evaluation_report(csv_path, md_path)
+        return
     rows = []
     with csv_path.open("r", encoding="utf-8", newline="") as f:
         for r in csv.DictReader(f):
@@ -143,6 +151,8 @@ def build_report(csv_path: Path, md_path: Path, tag: str = "") -> None:
 
     title = tag if tag else csv_path.stem
     lines = [f"# ASR Benchmark — {title}", ""]
+    lines.extend(["Language-mode provenance: **legacy/unknown**. Do not infer fixed-language versus "
+                  "automatic behavior from the dataset locale or current adapter defaults.", ""])
     metadata_path = csv_path.with_name(csv_path.stem + "_run.json")
     if metadata_path.exists():
         metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
@@ -182,6 +192,10 @@ def build_report(csv_path: Path, md_path: Path, tag: str = "") -> None:
         if e.get("note"):
             lines.append(f"- Note: {e['note']}")
         lines.append("")
+
+    for svc in sorted({r["service"] for r in rows} - endpoints.keys()):
+        lines.extend([f"### `{svc}` — historical/unregistered service",
+                      "Results are retained; no current endpoint configuration is advertised.", ""])
 
     # Datasets under test
     datasets_in_run = sorted({r["dataset"] for r in rows})
@@ -308,7 +322,7 @@ def build_report(csv_path: Path, md_path: Path, tag: str = "") -> None:
     lines.append("- **LBL** (last-final beyond last-chunk) = `last_recognized_event_wall − end_of_audio`. Pure server flush time relative to the last byte we pushed. **May be negative** when the SDK emits the final result before the last chunk goes out.")
     lines.append("- **UPL** (user-perceived latency) = `last_recognized_event_wall − speech_end`. How late the final result arrives after the user actually stopped speaking.")
     lines.append("")
-    lines.append("**fast_default / fast_llm / fast_mai / fast_mai_1_5 / fast_mai_2** (REST, no partials):")
+    lines.append("**fast_default / fast_llm / fast_mai_1_5 / fast_mai_2** (REST, no partials):")
     lines.append("- **LBL** = `response_fully_read_wall − end_of_audio_wall`. Time from last uploaded byte to fully-received response.")
     lines.append("- **UPL** = `response_fully_read_wall − speech_end_wall`. `speech_end_wall` is taken from the realtime SDK's last-word offset for that sample (when realtime ran successfully on it), so all services compare against the same reference. The CSV column `upl_self_ms` keeps each service's own phrase-derived value, and `upl_anchor` is `realtime` when anchored or `self` when the realtime anchor was unavailable.")
     lines.append("- Note: MAI phrase boundaries can span the full audio; using the realtime anchor here makes UPL directly comparable across services.")

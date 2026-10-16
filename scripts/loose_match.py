@@ -13,6 +13,7 @@ the standard WER.
 
 Backs up the strict CSV to <run>.csv.strict, then overwrites
 wer/ins/del/sub/ref_len/sentence_error with loose-match values.
+Chinese character-based SER and all CER fields retain their strict policy.
 
 After running, re-run report.py and error_analysis.py to refresh markdown.
 
@@ -22,6 +23,7 @@ Usage:
 from __future__ import annotations
 
 import csv
+import json
 import re
 import shutil
 import sys
@@ -67,6 +69,13 @@ def _is_loose_match(ref: str, hyp: str) -> bool:
 
 
 def main(csv_path: Path) -> None:
+    from benchmark.evaluation import evaluation_path
+    if evaluation_path(csv_path).exists():
+        entries = [json.loads(line) for line in evaluation_path(csv_path).read_text(encoding="utf-8").splitlines()]
+        if any(e["reference_segments"] or e["options"]["diarization"]
+               or e["options"]["language_mode"] == "multilingual" for e in entries):
+            raise ValueError("Annotated evaluation uses strict token ownership; loose matching is disabled. "
+                             "Preserve the original evaluation artifacts.")
     backup = csv_path.with_suffix(csv_path.suffix + ".strict")
     if not backup.exists():
         shutil.copy2(csv_path, backup)
@@ -97,7 +106,8 @@ def main(csv_path: Path) -> None:
             r["del"] = 0
             r["sub"] = 0
             r["ref_len"] = len(ref_words)
-            r["sentence_error"] = 0
+            if not (r.get("locale", "").startswith(("zh-", "yue-")) and r.get("cer") not in ("", None)):
+                r["sentence_error"] = 0
             n_changed += 1
 
     with csv_path.open("w", encoding="utf-8", newline="") as f:

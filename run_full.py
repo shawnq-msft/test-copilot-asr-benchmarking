@@ -4,12 +4,14 @@ from __future__ import annotations
 import argparse
 import json
 import time
+import sys
 from pathlib import Path
 
 from benchmark.config import DEFAULT_SERVICES, LOCALES, SERVICES, assert_credentials
 import benchmark.datasets_loader as _loader
 from benchmark.report import build_report
 from benchmark.runner import run_benchmark
+from benchmark.eval_options import add_evaluation_arguments, options_from_args
 from scripts.validate_benchmark import (check_selection, check_resume, collect_samples,
                                         make_metadata, metadata_path, validate_artifacts)
 
@@ -23,8 +25,8 @@ Examples:
   # Quick smoke test — 5 samples, 2 services, en-GB only
   python run_full.py --languages en-GB --max-per-dataset 5 --no-pace --services fast_default realtime
 
-  # Full run, all locales
-  python run_full.py
+  # Monolingual run, all locales, compatible service subset
+  python run_full.py --services fast_default realtime
 
   # Resume a partial run
   python run_full.py --languages en-GB --resume results/asr-bench_en-GB_20260527_120000.csv
@@ -42,8 +44,11 @@ Examples:
                    help="Thread pool size for parallel samples (default: 4)")
     p.add_argument("--no-pace", action="store_true",
                    help="Skip real-time pacing — runs faster but latency numbers are unrealistic")
+    p.add_argument("--chunk-ms", type=int, default=100,
+                   help="Streaming audio chunk duration in ms (default: 100; REST unchanged)")
     p.add_argument("--services", nargs="+", choices=SERVICES, default=list(DEFAULT_SERVICES),
-                   help="Services to benchmark (default: configured services except retired fast_mai). "
+                   help="Services to benchmark; choose a mode-compatible subset. Automatic-only realtime_mai_2 "
+                        "requires explicit multilingual/native mode. "
                         "Example: --services fast_default fast_mai_2 realtime realtime_mai_2")
     p.add_argument("--resume", type=str, default=None,
                    help="Path to an existing CSV to resume from (skips already-completed rows)")
@@ -60,10 +65,14 @@ Examples:
                    help="Runtime phrase-list hints applied to supported Speech endpoints")
     p.add_argument("--phrase-weight", type=float, default=1.0,
                    help="Phrase-list biasing weight from 0.0 to 2.0 (default: 1.0)")
+    add_evaluation_arguments(p)
     args = p.parse_args()
+    options = options_from_args(args)
 
     if not 0.0 <= args.phrase_weight <= 2.0:
         p.error("--phrase-weight must be between 0.0 and 2.0")
+    if args.chunk_ms <= 0:
+        p.error("--chunk-ms must be positive")
 
     try:
         warnings = check_selection(args.services, args.languages, args.max_per_dataset,
@@ -73,7 +82,7 @@ Examples:
         p.error(str(exc))
     for warning in warnings:
         print(f"[warning] {warning}")
-    if args.resume and len(args.languages) != 1:
+    if args.resume and not args.manifest and len(args.languages) != 1:
         p.error("--resume requires exactly one --languages locale")
 
     # Override DATA_ROOT if --testdata-dir was given
@@ -81,10 +90,21 @@ Examples:
         _loader.DATA_ROOT = Path(args.testdata_dir)
         print(f"[config] testdata-dir: {_loader.DATA_ROOT}")
 
+    try:
+        if args.manifest and any(arg.split("=")[0] in ("--languages", "--testdata-dir", "--max-per-dataset")
+                                 for arg in sys.argv[1:]):
+            raise ValueError("--manifest is an exact selection; do not combine with locale/root/limit flags")
+        groups = ({"manifest": _loader.load_manifest(Path(args.manifest))} if args.manifest else
+                  {lang: collect_samples([lang], args.max_per_dataset, args.seed) for lang in args.languages})
+        for samples in groups.values():
+            _loader.prepare_evaluation(samples, args.services, options, phrases=args.phrase_list)
+    except (ValueError, OSError) as exc:
+        p.error(str(exc))
+
     output_dir = Path(args.output_dir) if args.output_dir else Path(__file__).parent / "results"
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    for lang in args.languages:
+    for lang, samples in groups.items():
         print(f"\n{'='*60}")
         print(f"  Language: {lang}")
         print(f"{'='*60}\n")
@@ -94,15 +114,15 @@ Examples:
             ts = csv_path.stem.split("_", 2)[-1]
         else:
             ts = time.strftime("%Y%m%d_%H%M%S")
-            csv_path = output_dir / f"{args.tag}_{lang}_{ts}.csv"
+            csv_path = output_dir / f"{args.tag}_{lang}_{options.variant_id}_{ts}.csv"
         md_path = csv_path.with_name(csv_path.stem + "_report.md")
 
         try:
-            samples = collect_samples([lang], args.max_per_dataset, args.seed)
             metadata = make_metadata(samples, args.services, pace=not args.no_pace,
-                                     seed=args.seed, limit=args.max_per_dataset,
+                                     seed=args.seed, limit=0 if args.manifest else args.max_per_dataset,
                                      workers=args.workers, phrases=args.phrase_list,
-                                     phrase_weight=args.phrase_weight)
+                                     phrase_weight=args.phrase_weight, chunk_ms=args.chunk_ms,
+                                     evaluation_options=options)
             if args.resume:
                 check_resume(csv_path, metadata)
             elif csv_path.exists() or metadata_path(csv_path).exists():
@@ -118,7 +138,8 @@ Examples:
                       workers=args.workers, pace=not args.no_pace, retries=2,
                       sequential=(args.workers <= 1),
                       phrases=tuple(args.phrase_list),
-                      phrase_weight=args.phrase_weight)
+                      phrase_weight=args.phrase_weight, chunk_ms=args.chunk_ms,
+                      evaluation_options=options)
         validation = validate_artifacts(csv_path, require_reports=False)
         validation_path = csv_path.with_name(csv_path.stem + "_validation.json")
         validation_path.write_text(json.dumps(validation, indent=2), encoding="utf-8")

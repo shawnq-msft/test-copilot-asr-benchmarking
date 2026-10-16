@@ -5,7 +5,7 @@ import io
 import json
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stdout, redirect_stderr
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -163,6 +163,49 @@ class StreamingTests(unittest.TestCase):
         self.assertEqual(fake.config.speech_recognition_language, "en-GB")
         self.assertIsNone(result.error)
 
+    def test_matched_chunk_packetization_and_pacing(self):
+        for chunk_ms, count in ((20, 10), (100, 2)):
+            with self.subTest(chunk_ms=chunk_ms):
+                fake = FakeSpeech()
+                packets = []
+
+                def write(chunk):
+                    packets.append(chunk)
+                    fake.now += .001
+                    fake.recognizing.emit(fake.event("partial"))
+
+                def sleep(seconds):
+                    fake.now += seconds
+
+                fake.write = write
+                with patch.object(asr_realtime, "speechsdk", fake), \
+                        patch.object(asr_realtime.time, "perf_counter", side_effect=lambda: fake.now), \
+                        patch.object(asr_realtime.time, "sleep", side_effect=sleep):
+                    result = asr_realtime._run_realtime(
+                        self.sample(), service_name="realtime_mai_2", key="fake-key", region="region",
+                        endpoint="", pace=True, post_refinement=False,
+                        model=config.MAI_STREAMING_MODEL, chunk_ms=chunk_ms)
+                self.assertIsNone(result.error)
+                self.assertEqual(len(packets), count)
+                self.assertEqual(sum(map(len, packets)), 6400)
+                self.assertEqual(result.streaming_evidence["chunk_ms"], chunk_ms)
+                self.assertAlmostEqual(result.streaming_evidence["end_of_audio_s"], .2)
+
+    def test_runner_preserves_selected_streaming_order_after_baseline(self):
+        order = []
+
+        def call(adapter, sample, pace, retries, phrases, weight, chunk):
+            service = next(name for name, implementation in runner.ADAPTERS.items()
+                           if implementation == adapter)
+            order.append(service)
+            self.assertEqual(chunk, 20)
+            return AsrResult(service, "hello world", None, None, None)
+
+        with patch.object(runner, "_call_with_retries", side_effect=call):
+            runner._run_sample(self.sample(), ("realtime_mai_2_api", "realtime_mai_2", "realtime"),
+                               True, 0, chunk_ms=20)
+        self.assertEqual(order, ["realtime", "realtime_mai_2_api", "realtime_mai_2"])
+
     def test_mai_only_without_words_has_no_invented_anchor(self):
         result, _ = self.run_fake(anchored=False)
         self.assertIsNone(result.first_latency_ms)
@@ -191,18 +234,39 @@ class StreamingTests(unittest.TestCase):
         self.assertIn("realtime_mai_2", config.STREAMING_SERVICES)
         self.assertIs(runner.ADAPTERS["realtime_mai_2"], asr_realtime.transcribe_realtime_mai_2)
 
-    def test_retired_model_is_explicit_only_without_substitution(self):
+    def test_retired_model_is_removed_without_substitution(self):
         import inspect
         from benchmark import asr_llm_speech
+        from benchmark.eval_options import CAPABILITIES
 
-        self.assertIn("fast_mai", config.SERVICES)
+        self.assertNotIn("fast_mai", config.SERVICES)
         self.assertNotIn("fast_mai", config.DEFAULT_SERVICES)
+        self.assertNotIn("fast_mai", runner.ADAPTERS)
+        self.assertNotIn("fast_mai", CAPABILITIES)
+        self.assertFalse(hasattr(asr_llm_speech, "transcribe_fast_mai"))
         self.assertEqual(inspect.signature(runner.run_benchmark).parameters["services"].default,
                          config.DEFAULT_SERVICES)
-        with patch.object(asr_llm_speech, "_streaming_upload") as upload:
-            asr_llm_speech.transcribe_fast_mai(self.sample())
-        self.assertEqual(upload.call_args.args[1]["enhancedMode"]["model"], "mai-transcribe-1")
-        self.assertEqual(upload.call_args.args[4], "fast_mai")
+        with self.assertRaisesRegex(ValueError, "known service"):
+            check_selection(["fast_mai"], ["en-GB"], 1, 1, [])
+        with self.assertRaisesRegex(ValueError, "Unknown service"):
+            config.assert_credentials(("fast_mai",))
+        for service, model in (("fast_mai_1_5", "MAI-Transcribe-1.5"), ("fast_mai_2", "MAI-Transcribe-2")):
+            self.assertIn(service, config.SERVICES)
+            self.assertIn(service, config.DEFAULT_SERVICES)
+            self.assertIn(service, runner.ADAPTERS)
+            with patch.object(asr_llm_speech, "_streaming_upload") as upload:
+                runner.ADAPTERS[service](self.sample())
+            self.assertEqual(upload.call_args.args[1]["enhancedMode"]["model"], model)
+
+    def test_removed_service_cli_is_rejected_before_running(self):
+        import run_full
+
+        with patch("sys.argv", ["run_full.py", "--services", "fast_mai"]), \
+                patch.object(run_full, "run_benchmark") as run, \
+                redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as error:
+            run_full.main()
+        self.assertEqual(error.exception.code, 2)
+        run.assert_not_called()
 
     def test_region_warnings_distinguish_rest_from_streaming(self):
         services = ["fast_llm", "fast_mai_1_5", "fast_mai_2", "realtime_mai_2"]
@@ -315,6 +379,26 @@ class WorkflowTests(unittest.TestCase):
         with patch.dict(runner.ADAPTERS, {"realtime_mai_2": Mock(return_value=self.result)}):
             runner.run_benchmark([self.sample], self.csv, services=tuple(self.services), workers=1, retries=0)
 
+    def test_removed_service_historical_results_remain_readable(self):
+        metadata = make_metadata([self.sample], ["fast_mai"], pace=True, seed=42,
+                                 limit=1, workers=1, phrases=[], phrase_weight=1.0)
+        metadata_path(self.csv).write_text(json.dumps(metadata), encoding="utf-8")
+        result = AsrResult("fast_mai", "air flow", None, 10, request_id="historical-request")
+        with self.csv.open("w", encoding="utf-8", newline="") as output:
+            writer = csv.DictWriter(output, fieldnames=runner.CSV_FIELDS)
+            writer.writeheader()
+            writer.writerow(runner._to_row(self.sample, result))
+        with patch("benchmark.report.tcp_ping_ms", return_value=None), \
+                patch("benchmark.report.public_ip_and_location", return_value={}), \
+                patch("scripts.error_analysis._load_sample_index", return_value={}):
+            report = self.csv.with_name("test_report.md")
+            analysis = self.csv.with_name("test_error_analysis.md")
+            build_report(self.csv, report)
+            error_analysis.main(self.csv, analysis)
+        self.assertIn("`fast_mai` — historical/unregistered service", report.read_text(encoding="utf-8"))
+        self.assertIn("fast_mai", analysis.read_text(encoding="utf-8"))
+        self.assertTrue(validate_artifacts(self.csv)["ok"])
+
     def test_exact_artifacts_normalization_and_reports(self):
         self.run_fixture()
         before = self.csv.read_bytes()
@@ -424,6 +508,7 @@ class WorkflowTests(unittest.TestCase):
         write_pcm16_wav(self.sample.pcm16_mono_16k, data / "a.wav")
         output = self.root / "output"
         argv = ["run_full.py", "--languages", "en-GB", "--services", "realtime_mai_2",
+                "--language-mode", "multilingual", "--lid-strategy", "native",
                 "--max-per-dataset", "1", "--workers", "1",
                 "--testdata-dir", str(data.parent.parent), "--output-dir", str(output)]
         adapter = Mock(return_value=self.result)
@@ -440,11 +525,12 @@ class WorkflowTests(unittest.TestCase):
                 run_full.main()
             self.assertEqual(adapter.call_count, 1)
             strict_bytes = csv_path.read_bytes()
-            loose_match.main(csv_path)
+            with self.assertRaisesRegex(ValueError, "strict token ownership"):
+                loose_match.main(csv_path)
             build_report(csv_path, csv_path.with_name(csv_path.stem + "_report.md"))
             error_analysis.main(csv_path, csv_path.with_name(csv_path.stem + "_error_analysis.md"))
             self.assertTrue(validate_artifacts(csv_path)["ok"])
-            self.assertEqual(csv_path.with_suffix(".csv.strict").read_bytes(), strict_bytes)
+            self.assertEqual(csv_path.read_bytes(), strict_bytes)
 
     def test_partial_resume_restores_baseline_without_calling_it(self):
         baseline = AsrResult("realtime", "air flow", 20, 10, request_id="r", session_id="s",
@@ -542,7 +628,7 @@ class WorkflowTests(unittest.TestCase):
                 patch.object(validate_benchmark, "assert_credentials"), \
                 patch.object(validate_benchmark, "collect_samples", return_value=[self.sample]), \
                 patch.object(validate_benchmark, "check_selection", wraps=check_selection) as selection:
-            self.assertEqual(validate_benchmark.main(), 0)
+            self.assertEqual(validate_benchmark.main(), 1)
             self.assertEqual(selection.call_args.args[0], list(config.DEFAULT_SERVICES))
 
 

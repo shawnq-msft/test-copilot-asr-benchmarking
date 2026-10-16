@@ -12,3 +12,7 @@ regenerate both report and error analysis once with the original data root.
 The normalization script itself does not regenerate reports.
 Validate row identities and unchanged non-scoring evidence and persist the outcome.
 Do not resume into normalized results or invoke justification automatically.
+
+Do not normalize diarization, multilingual, or segment-annotated evaluation runs:
+the scoring depends on strict token ownership. Preserve their original evidence
+and regenerate the evaluation reports without changing scores.

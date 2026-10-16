@@ -2,10 +2,123 @@ from __future__ import annotations
 
 import random
 import re
+import hashlib
+import json
+import math
 from pathlib import Path
 
 from .audio_utils import load_audio_as_pcm16_mono_16k, write_pcm16_wav
 from .config import Sample
+from .eval_options import EvaluationOptions, validate_options
+from .metrics import normalize_text
+
+
+def load_manifest(path: Path) -> list[Sample]:
+    raw = path.read_bytes()
+    digest = hashlib.sha256(raw).hexdigest()
+    samples = []
+    identities = set()
+    for number, line in enumerate(raw.decode("utf-8-sig").splitlines(), 1):
+        if not line.strip():
+            continue
+        entry = json.loads(line)
+        if not isinstance(entry, dict) or entry.get("schema_version") != 1:
+            raise ValueError(f"Manifest line {number}: schema_version must be 1")
+        sample_id = entry.get("sample_id")
+        dataset = entry.get("dataset", "user-audio")
+        if not all(isinstance(value, str) and value.strip() for value in (sample_id, dataset, entry.get("audio"))):
+            raise ValueError(f"Manifest line {number}: audio/sample_id/dataset must be nonempty strings")
+        identity = (dataset, sample_id)
+        if identity in identities:
+            raise ValueError(f"Duplicate manifest identity: {identity}")
+        identities.add(identity)
+        audio_path = path.parent / entry["audio"]
+        try:
+            pcm, duration = load_audio_as_pcm16_mono_16k(str(audio_path))
+        except (OSError, RuntimeError, ValueError) as exc:
+            raise ValueError(f"{sample_id}: cannot decode manifest audio {audio_path}: {exc}") from exc
+        if duration < .2:
+            raise ValueError(f"{sample_id}: recording must be at least 0.2 seconds")
+        scenario = entry.get("scenario", "single-language")
+        if scenario not in ("single-language", "language-switching"):
+            raise ValueError(f"{sample_id}: invalid scenario")
+        locale = entry.get("requested_language", "")
+        if not isinstance(locale, str):
+            raise ValueError(f"{sample_id}: requested_language must be a string")
+        reference = entry.get("reference")
+        text = ""
+        segments = None
+        language = None
+        available = False
+        if reference is not None:
+            if not isinstance(reference, dict):
+                raise ValueError(f"{sample_id}: reference must be an object")
+            language = reference.get("language")
+            if language is not None and (not isinstance(language, str) or not language.strip()):
+                raise ValueError(f"{sample_id}: reference language must be a nonempty string")
+            segments = reference.get("segments")
+            if segments is not None:
+                if not isinstance(segments, list) or not segments:
+                    raise ValueError(f"{sample_id}: reference segments must be a nonempty list")
+                last_start = -1.0
+                for segment in segments:
+                    if not isinstance(segment, dict) or not isinstance(segment.get("text"), str):
+                        raise ValueError(f"{sample_id}: segment text must be a string")
+                    for field in ("speaker", "language"):
+                        value = segment.get(field)
+                        if field == "speaker" and isinstance(value, int) and not isinstance(value, bool):
+                            segment[field] = str(value)
+                            continue
+                        if value is not None and (not isinstance(value, str) or not value.strip()):
+                            raise ValueError(f"{sample_id}: {field} must be a nonempty string")
+                    start, end = segment.get("start_s"), segment.get("end_s")
+                    if start is not None or end is not None:
+                        if (not all(isinstance(v, (float, int)) and not isinstance(v, bool)
+                                    and math.isfinite(v) for v in (start, end))
+                                or not 0 <= start < end <= duration + .001 or start < last_start):
+                            raise ValueError(f"{sample_id}: invalid/unordered segment timestamps")
+                        last_start = start
+                text = " ".join(segment["text"] for segment in segments)
+                available = True
+            if "text" in reference:
+                if not isinstance(reference["text"], str):
+                    raise ValueError(f"{sample_id}: reference text must be a string")
+                if segments and normalize_text(text) != normalize_text(reference["text"]):
+                    raise ValueError(f"{sample_id}: reference text disagrees with segments")
+                text = reference["text"]
+                available = True
+        samples.append(Sample(sample_id, dataset, locale, pcm, text, duration,
+                              reference_available=available, reference_segments=segments,
+                              reference_language=language, scenario=scenario, manifest_hash=digest,
+                              manifest_path=str(path.resolve()), audio_path=str(audio_path.resolve())))
+    if not samples:
+        raise ValueError("Manifest contains no samples")
+    return samples
+
+
+def prepare_evaluation(samples: list[Sample], services, options: EvaluationOptions, *, phrases=()) -> None:
+    if not samples:
+        raise ValueError("Evaluation selection contains no samples")
+    validate_options(options, services, [s.locale for s in samples], phrases=phrases)
+    if options.lid_strategy == "continuous" and "realtime" in services:
+        from .config import AZURE_SPEECH_ENDPOINT
+        if not AZURE_SPEECH_ENDPOINT.endswith("/speech/universal/v2"):
+            raise ValueError("Continuous SDK LID requires an explicitly configured Speech universal/v2 endpoint")
+    for sample in samples:
+        if options.score_wder:
+            segments = sample.reference_segments
+            if (not sample.reference_available or not segments
+                    or not any(normalize_text(s["text"]) for s in segments)
+                    or any(not s.get("speaker") or s["speaker"].strip().lower() in ("unknown", "unassigned")
+                           for s in segments if normalize_text(s["text"]))):
+                raise ValueError(f"{sample.sample_id}: wDER requires user-provided speaker-labeled text")
+            last_end = 0.0
+            for segment in segments:
+                if segment.get("start_s") is not None:
+                    if segment["start_s"] < last_end:
+                        raise ValueError(f"{sample.sample_id}: scored overlap is not supported")
+                    last_end = segment["end_s"]
+        sample.evaluation_options = options
 
 # Root of the test data directory. Override at module level before calling
 # iter_samples() or list_datasets() to use a different location.
@@ -109,7 +222,7 @@ def iter_samples(dataset: str, limit: int | None = 30,
             "Run: python scripts/generate_testset.py --locale {locale}"
         )
 
-    all_entries: list[tuple[Path, str, str]] = []
+    all_entries: list[tuple[Path, str, str, bool]] = []
     for d in dirs:
         trans_path = d / "trans.txt"
         if trans_path.exists():
@@ -119,7 +232,7 @@ def iter_samples(dataset: str, limit: int | None = 30,
         for filename, reference in pairs:
             wav_path = d / filename
             if wav_path.exists() or strict:
-                all_entries.append((wav_path, reference, f"{d.name}/{filename}"))
+                all_entries.append((wav_path, reference, f"{d.name}/{filename}", trans_path.exists()))
 
     if not all_entries:
         raise FileNotFoundError(
@@ -132,7 +245,7 @@ def iter_samples(dataset: str, limit: int | None = 30,
         all_entries = rng.sample(all_entries, limit)
 
     samples = []
-    for wav_path, reference, sample_id in all_entries:
+    for wav_path, reference, sample_id, has_reference in all_entries:
         if strict and not wav_path.is_file():
             raise FileNotFoundError(f"Missing referenced audio: {wav_path}")
         try:
@@ -153,6 +266,9 @@ def iter_samples(dataset: str, limit: int | None = 30,
             pcm16_mono_16k=pcm,
             reference=reference,
             duration_s=duration,
+            reference_available=has_reference,
+            reference_language=locale if has_reference else None,
+            audio_path=str(wav_path.resolve()),
         ))
     return samples
 

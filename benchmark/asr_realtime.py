@@ -69,7 +69,11 @@ def _run_realtime(sample: Sample, *, service_name: str, key: str,
                   segmentation_silence_ms: int | None = None,
                   phrases: tuple[str, ...] = (),
                   phrase_weight: float = 1.0,
-                  model: str | None = None) -> AsrResult:
+                  model: str | None = None,
+                  chunk_ms: int = REALTIME_CHUNK_MS) -> AsrResult:
+    call_start = time.perf_counter()
+    if chunk_ms <= 0:
+        raise ValueError("chunk_ms must be positive")
     if model and not hasattr(speechsdk.SpeechConfig, "model"):
         return AsrResult(service_name, "", None, None,
                          "MAI streaming requires Speech SDK >=1.52.0 with SpeechConfig.model")
@@ -83,7 +87,8 @@ def _run_realtime(sample: Sample, *, service_name: str, key: str,
     if model:
         speech_config.model = model
     else:
-        speech_config.speech_recognition_language = sample.locale
+        if sample.evaluation_options is None or sample.evaluation_options.language_mode == "monolingual":
+            speech_config.speech_recognition_language = sample.locale
         speech_config.output_format = speechsdk.OutputFormat.Detailed
         speech_config.request_word_level_timestamps()
     if post_refinement:
@@ -104,8 +109,24 @@ def _run_realtime(sample: Sample, *, service_name: str, key: str,
     )
     push_stream = speechsdk.audio.PushAudioInputStream(stream_format)
     audio_config = speechsdk.audio.AudioConfig(stream=push_stream)
-    recognizer = speechsdk.SpeechRecognizer(speech_config=speech_config,
-                                            audio_config=audio_config)
+    recognizer_args = {"speech_config": speech_config, "audio_config": audio_config}
+    if sample.evaluation_options and sample.evaluation_options.language_mode == "multilingual" and not model:
+        recognizer_args["auto_detect_source_language_config"] = (
+            speechsdk.languageconfig.AutoDetectSourceLanguageConfig(
+                languages=list(sample.evaluation_options.candidates)))
+        if sample.evaluation_options.lid_strategy == "continuous":
+            speech_config.set_property(speechsdk.PropertyId.SpeechServiceConnection_LanguageIdMode, "Continuous")
+    diarization = service_name == "realtime_diarization"
+    if diarization:
+        recognizer = speechsdk.transcription.ConversationTranscriber(**recognizer_args)
+        recognizing_signal, recognized_signal = recognizer.transcribing, recognizer.transcribed
+        start_recognition = recognizer.start_transcribing_async
+        stop_recognition = recognizer.stop_transcribing_async
+    else:
+        recognizer = speechsdk.SpeechRecognizer(**recognizer_args)
+        recognizing_signal, recognized_signal = recognizer.recognizing, recognizer.recognized
+        start_recognition = recognizer.start_continuous_recognition_async
+        stop_recognition = recognizer.stop_continuous_recognition_async
     if phrases:
         phrase_list = speechsdk.PhraseListGrammar.from_recognizer(recognizer)
         for phrase in phrases:
@@ -115,6 +136,7 @@ def _run_realtime(sample: Sample, *, service_name: str, key: str,
     state = {
         "audio_start": None,
         "first_partial": None,
+        "first_text": None,
         "last_final": None,
         "first_word_start_s": None,
         "last_word_end_s": None,
@@ -129,6 +151,7 @@ def _run_realtime(sample: Sample, *, service_name: str, key: str,
         "cancellations": [],
     }
     session_done = threading.Event()
+    segments = []
 
     def remember_request_id(result, *, allow_result_id_fallback: bool = False) -> None:
         request_id = _result_request_id(
@@ -150,6 +173,8 @@ def _run_realtime(sample: Sample, *, service_name: str, key: str,
             state["first_partial"] = time.perf_counter()
         if evt.result.text:
             state["partial_count"] += 1
+            if state["first_text"] is None:
+                state["first_text"] = time.perf_counter()
 
     def on_recognized(evt):
         remember_session_id(evt)
@@ -157,10 +182,23 @@ def _run_realtime(sample: Sample, *, service_name: str, key: str,
         state["result_statuses"].append(str(evt.result.reason))
         if evt.result.reason == speechsdk.ResultReason.RecognizedSpeech and evt.result.text:
             state["last_final"] = time.perf_counter()
+            if state["first_text"] is None:
+                state["first_text"] = state["last_final"]
             state["finals"].append(evt.result.text)
             try:
                 words = _extract_words(evt.result.json)
-            except ValueError as exc:
+                detected = None
+                if sample.evaluation_options and sample.evaluation_options.language_mode == "multilingual" and not model:
+                    detected = speechsdk.AutoDetectSourceLanguageResult(evt.result).language or None
+                offset, duration = getattr(evt.result, "offset", None), getattr(evt.result, "duration", None)
+                segments.append({
+                    "text": evt.result.text, "speaker": getattr(evt.result, "speaker_id", None),
+                    "language": detected, "source": "sdk_final_result",
+                    "start_s": offset / 1e7 if offset is not None else None,
+                    "end_s": (offset + duration) / 1e7 if offset is not None and duration is not None else None,
+                    "raw_json": evt.result.json,
+                })
+            except (ValueError, TypeError, RuntimeError) as exc:
                 state["error"] = str(exc)
                 session_done.set()
                 return
@@ -189,20 +227,20 @@ def _run_realtime(sample: Sample, *, service_name: str, key: str,
         state["completed"] = True
         session_done.set()
 
-    recognizer.recognizing.connect(on_recognizing)
-    recognizer.recognized.connect(on_recognized)
+    recognizing_signal.connect(on_recognizing)
+    recognized_signal.connect(on_recognized)
     recognizer.canceled.connect(on_canceled)
     recognizer.session_started.connect(on_session_started)
     recognizer.session_stopped.connect(on_session_stopped)
 
     try:
-        recognizer.start_continuous_recognition_async().get()
+        start_recognition().get()
     except Exception as e:
         push_stream.close()
         return AsrResult(service_name, "", None, None, f"start_failed: {e!r}")
 
-    chunks = chunk_pcm(sample.pcm16_mono_16k, REALTIME_CHUNK_MS)
-    chunk_dt = REALTIME_CHUNK_MS / 1000.0
+    chunks = chunk_pcm(sample.pcm16_mono_16k, chunk_ms)
+    chunk_dt = chunk_ms / 1000.0
 
     state["audio_start"] = time.perf_counter()
     bytes_sent = 0
@@ -231,7 +269,7 @@ def _run_realtime(sample: Sample, *, service_name: str, key: str,
     if not session_done.wait(timeout=15.0 if post_refinement else 10.0):
         state["error"] = state["error"] or "timeout: no terminal streaming event after audio closed"
     try:
-        recognizer.stop_continuous_recognition_async().get()
+        stop_recognition().get()
     except Exception as exc:
         state["error"] = state["error"] or f"stop_failed: {exc!r}"
 
@@ -270,6 +308,11 @@ def _run_realtime(sample: Sample, *, service_name: str, key: str,
         "audio_bytes_sent": bytes_sent,
         "audio_bytes_expected": len(sample.pcm16_mono_16k),
         "pace": pace,
+        "chunk_ms": chunk_ms,
+        "finalization": "SDK stream close at end of recording",
+        "setup_ms": (audio_start - call_start) * 1000.0,
+        "first_text_s": (state["first_text"] - audio_start
+                         if state["first_text"] is not None else None),
         "first_partial_s": (state["first_partial"] - audio_start
                             if state["first_partial"] is not None else None),
         "last_final_s": (state["last_final"] - audio_start
@@ -288,40 +331,55 @@ def _run_realtime(sample: Sample, *, service_name: str, key: str,
                      first_word_start_s=state["first_word_start_s"],
                      last_word_end_s=state["last_word_end_s"],
                      words=state["words"] or None,
-                     streaming_evidence=evidence)
+                     streaming_evidence=evidence, segments=segments)
 
 
 def transcribe_realtime(sample: Sample, pace: bool = True,
                         phrases: tuple[str, ...] = (),
-                        phrase_weight: float = 1.0) -> AsrResult:
+                        phrase_weight: float = 1.0,
+                        chunk_ms: int = REALTIME_CHUNK_MS) -> AsrResult:
     return _run_realtime(sample, service_name="realtime",
                          key=AZURE_SPEECH_KEY,
                          endpoint=AZURE_SPEECH_ENDPOINT,
                          region=AZURE_SPEECH_REGION,
                          pace=pace, post_refinement=False,
                          segmentation_silence_ms=SEGMENTATION_SILENCE_MS,
-                         phrases=phrases, phrase_weight=phrase_weight)
+                         phrases=phrases, phrase_weight=phrase_weight, chunk_ms=chunk_ms)
 
 
 def transcribe_realtime_refine(sample: Sample, pace: bool = True,
                                phrases: tuple[str, ...] = (),
-                               phrase_weight: float = 1.0) -> AsrResult:
+                               phrase_weight: float = 1.0,
+                               chunk_ms: int = REALTIME_CHUNK_MS) -> AsrResult:
     return _run_realtime(sample, service_name="realtime_refine",
                          key=REFINE_AZURE_KEY,
                          endpoint=REFINE_AZURE_ENDPOINT,
                          region=REFINE_AZURE_REGION,
                          pace=pace, post_refinement=True,
                          segmentation_silence_ms=SEGMENTATION_SILENCE_MS,
-                         phrases=phrases, phrase_weight=phrase_weight)
+                         phrases=phrases, phrase_weight=phrase_weight, chunk_ms=chunk_ms)
 
 
 def transcribe_realtime_mai_2(sample: Sample, pace: bool = True,
                               phrases: tuple[str, ...] = (),
-                              phrase_weight: float = 1.0) -> AsrResult:
+                              phrase_weight: float = 1.0,
+                              chunk_ms: int = REALTIME_CHUNK_MS) -> AsrResult:
     return _run_realtime(sample, service_name="realtime_mai_2",
                          key=AZURE_SPEECH_KEY,
                          endpoint=AZURE_SPEECH_ENDPOINT,
                          region=AZURE_SPEECH_REGION,
                          pace=pace, post_refinement=False,
                          model=MAI_STREAMING_MODEL,
-                         phrases=phrases, phrase_weight=phrase_weight)
+                         phrases=phrases, phrase_weight=phrase_weight, chunk_ms=chunk_ms)
+
+
+def transcribe_realtime_diarization(sample: Sample, pace: bool = True,
+                                    phrases: tuple[str, ...] = (), phrase_weight: float = 1.0,
+                                    chunk_ms: int = REALTIME_CHUNK_MS) -> AsrResult:
+    if phrases or phrase_weight != 1.0:
+        return AsrResult("realtime_diarization", "", None, None,
+                         "Phrase biasing is not verified for SDK diarization")
+    return _run_realtime(sample, service_name="realtime_diarization",
+                         key=AZURE_SPEECH_KEY, endpoint=AZURE_SPEECH_ENDPOINT,
+                         region=AZURE_SPEECH_REGION, pace=pace, post_refinement=False,
+                         chunk_ms=chunk_ms)

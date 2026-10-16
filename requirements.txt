@@ -3,5 +3,7 @@ requests
 numpy
 soundfile
 rapidfuzz
+scipy>=1.11
 tqdm
 azure-cognitiveservices-speech>=1.52.0
+websockets>=15.0,<17

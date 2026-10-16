@@ -8,6 +8,9 @@ A reusable Copilot ASR benchmark framework for Azure Speech-to-Text services. It
   **Speech SDK >=1.52.0**, with incremental transcripts, final-result validation,
   request/session IDs, and streaming timing evidence. It is distinct from the
   REST model `fast_mai_2` and remains a **public preview**.
+- **Optional direct MAI Realtime API** (`realtime_mai_2_api`) is available through
+  `--services`, alongside the SDK adapter. It uses the same resource key with a
+  MAI Realtime endpoint and deployed model, and is **excluded from default runs**.
 - **One Copilot skill, full pipeline or individual stages:** the
   [asr-benchmark skill](.github/skills/asr-benchmark/SKILL.md) routes setup, audio
   generation, smoke tests, full runs, resume, normalization, analysis, and validation.
@@ -18,25 +21,28 @@ A reusable Copilot ASR benchmark framework for Azure Speech-to-Text services. It
 
 > **Recommended testing region: Southeast Asia (`southeastasia`).**
 > As verified on **October 10, 2026**, one shared Speech resource there supports
-> all seven implemented, non-retired benchmark modes, including REST enhanced
+> all seven default implemented, non-retired benchmark modes, including REST enhanced
 > transcription and MAI streaming. Use that resource's matching **key, region,
 > and endpoint**; no separate MAI credentials are required.
 > **East US 2 is not a drop-in replacement for combined tests:** MAI streaming
 > worked there, but REST enhanced-mode requests returned HTTP 400.
+> The optional direct Realtime API additionally requires a deployed model and
+> accessible API route; the seven-mode recommendation does not verify that route.
 > Regional availability can change; check the current
 > [REST enhanced-mode regions](https://learn.microsoft.com/en-us/azure/ai-services/speech-service/regions?tabs=llmspeech)
 > and [MAI streaming regions](https://learn.microsoft.com/en-us/azure/ai-services/speech-service/mai-transcribe-2-streaming#availability-and-regions).
 
 After [setup](.github/prompts/01-setup.prompt.md) and
 [preparing test audio](.github/prompts/02-generate-testset.prompt.md), smoke-test
-all seven active Azure modes with paced audio:
+the six implemented monolingual configurations with paced audio:
 
 ```powershell
-.\.venv\Scripts\python.exe -X utf8 run_full.py --languages en-GB --max-per-dataset 2 --workers 1 --services fast_default fast_llm fast_mai_1_5 fast_mai_2 realtime realtime_refine realtime_mai_2
+.\.venv\Scripts\python.exe -X utf8 run_full.py --languages en-GB --max-per-dataset 2 --workers 1 --services fast_default fast_llm fast_mai_1_5 fast_mai_2 realtime realtime_refine
 ```
 
-This explicit service list excludes the `whisper_v3` stub and retired `fast_mai`.
-`fast_mai` is no longer a default but remains selectable for legacy diagnostics.
+This explicit service list excludes the `whisper_v3` stub,
+opt-in `realtime_mai_2_api` / `realtime_diarization`, and automatic-only `realtime_mai_2`.
+Deprecated MAI-Transcribe-1 (`fast_mai`) has been removed; MAI 1.5 and 2 remain available.
 The latest full-local-Xiaomi check covered **one recording across all seven modes**:
 7/7 successful service calls, not a statistically meaningful accuracy or latency ranking.
 
@@ -82,7 +88,7 @@ Use the discoverable [asr-benchmark skill](.github/skills/asr-benchmark/SKILL.md
 to run a full workflow or just the requested stage. For example:
 
 ```text
-Run end-to-end for en-GB, 5 samples per dataset, comparing realtime and realtime_mai_2.
+Run end-to-end for en-GB, 5 samples per dataset, comparing realtime and fast_default.
 Reuse existing audio, preserve strict results, and apply loose matching.
 
 Validate this exact CSV without rerunning recognition.
@@ -105,10 +111,13 @@ not a production SLA. It uses the same `AZURE_SPEECH_KEY`, `AZURE_SPEECH_REGION`
 and `AZURE_SPEECH_ENDPOINT` as baseline realtime. No separate MAI key or endpoint
 is required: use a Speech resource in a documented supported region, with its
 matching key and endpoint.
+Its currently verified SDK configuration is automatic/native multilingual only.
+Explicitly request that mode; ordinary runs now default to monolingual and reject
+unsupported combinations rather than silently using auto-detection.
 
 ```powershell
-.\.venv\Scripts\python.exe -X utf8 scripts\validate_benchmark.py preflight --languages en-GB --services realtime realtime_mai_2 --max-per-dataset 2 --workers 1
-.\.venv\Scripts\python.exe -X utf8 run_full.py --languages en-GB --services realtime realtime_mai_2 --max-per-dataset 2 --workers 1 --tag streaming-smoke
+.\.venv\Scripts\python.exe -X utf8 scripts\validate_benchmark.py preflight --languages en-GB --services realtime_mai_2 --language-mode multilingual --lid-strategy native --max-per-dataset 2 --workers 1
+.\.venv\Scripts\python.exe -X utf8 run_full.py --languages en-GB --services realtime_mai_2 --language-mode multilingual --lid-strategy native --max-per-dataset 2 --workers 1 --tag streaming-smoke
 ```
 
 The adapter does not enable unverified model language-locking, phrase-list,
@@ -117,8 +126,8 @@ are rejected. Baseline realtime boundaries anchor first latency/UPL when availab
 In a MAI-only run, absent model word timing means these metrics are unavailable;
 LBL and final transcript evidence can still be collected. Do not infer zero latency.
 
-Default selection excludes retired `fast_mai`; it remains explicitly selectable
-for legacy diagnostics and is never mapped to another model. The unimplemented
+The retired `fast_mai` service is no longer selectable. Historical results remain
+readable and are never mapped to another model. The unimplemented
 `whisper_v3` stub remains in defaults and is disclosed. Choose an explicit service
 subset for a smoke test; a default run with service failures fails validation.
 
@@ -136,9 +145,201 @@ Check the current [REST enhanced-mode region table](https://learn.microsoft.com/
 and [MAI streaming regions](https://learn.microsoft.com/en-us/azure/ai-services/speech-service/mai-transcribe-2-streaming#availability-and-regions).
 Preflight warns on regions absent from the documented lists; it does not reroute.
 
-`fast_mai` selects MAI-Transcribe-1, deprecated August 20, 2026. The tested service
-now rejects that model even in Southeast Asia. It is excluded from defaults, but
-an explicit `--services fast_mai` still sends the legacy request for diagnostics.
+MAI-Transcribe-1 was deprecated August 20, 2026 and its `fast_mai` adapter has been
+removed. `--services fast_mai` is rejected locally; no legacy request is sent.
+
+### Comparing MAI Realtime API with Speech SDK
+
+The opt-in `realtime_mai_2_api` service uses the
+[documented Realtime WebSocket API](https://learn.microsoft.com/en-us/azure/ai-services/speech-service/mai-transcribe-2-streaming-realtime),
+while `realtime_mai_2` remains the SDK implementation. Defaults are unchanged.
+The Realtime API requires a **deployed MAI-Transcribe-2-Streaming model** and the
+resource's **Azure MAI Realtime API v1.0** endpoint. Set `MAI_REALTIME_ENDPOINT`
+and `MAI_REALTIME_DEPLOYMENT`, using the same resource/key as the SDK.
+Do not assume that a resource which accepts SDK requests also exposes the
+Realtime API route: a Southeast Asia test resource returned `404 API Not Found`,
+while the East US 2 resource with a deployed model accepted the route (2026-10-12).
+This is resource-level evidence, not a new regional availability guarantee.
+
+To select this endpoint in a normal benchmark, configure these optional values
+in `.env` using your resource's actual endpoint and deployment name:
+
+```dotenv
+MAI_REALTIME_ENDPOINT=https://your-resource-name.services.ai.azure.com
+MAI_REALTIME_DEPLOYMENT=MAI-Transcribe-2-Streaming
+```
+
+Keep `AZURE_SPEECH_KEY`, `AZURE_SPEECH_REGION`, and `AZURE_SPEECH_ENDPOINT`
+matched to that resource; there is no separate MAI API key. Then preflight and run:
+
+```powershell
+.\.venv\Scripts\python.exe -X utf8 scripts\validate_benchmark.py preflight --languages en-GB --services realtime realtime_mai_2_api --max-per-dataset 2 --workers 1 --chunk-ms 20
+.\.venv\Scripts\python.exe -X utf8 run_full.py --languages en-GB --services realtime realtime_mai_2_api --max-per-dataset 2 --workers 1 --chunk-ms 20 --tag mai-api-smoke
+```
+
+Baseline `realtime` supplies shared word-boundary latency anchors. You can select
+only `--services realtime_mai_2_api`, but speech-anchored first latency and UPL
+will be unavailable without those anchors. Neither selection changes defaults.
+
+The guide recommends 10-20 ms chunks and explicit `input_audio_buffer.commit`.
+Neither guide establishes that the Realtime API is inherently faster than SDK.
+Compare **matched** chunk sizes and include connection/setup time; do not compare
+a preconnected API session with an SDK cold start and call the difference model speed.
+API commit at EOF and SDK stream-close at EOF can still have different server
+finalization semantics.
+Auto-detection omits the optional language field, as in the guide's Python sample;
+the tested service rejected the JSON example's explicit `"language": null`.
+
+For a reproducible paired experiment using existing audio:
+
+```powershell
+.\.venv\Scripts\python.exe -X utf8 scripts\compare_mai_transports.py --output-dir results\mai-transport-experiment --commands 5 --repetitions 5 --chunk-ms 100 20
+```
+
+This uses all local Xiaomi recordings plus five seeded en-GB smart commands,
+freezes baseline-realtime speech boundaries, performs excluded warm-ups, and
+alternates SDK/API order within each matched chunk-size condition. It calls the
+existing benchmark runner with one worker, paced PCM, fresh sessions, and no retries.
+The output directory must be new. With one Xiaomi recording, this is 120 measured
+calls plus six anchor and four warm-up calls. It makes paid service calls.
+
+Outputs include exact experiment selection and PCM hashes, per-pair CSVs/run
+metadata/streaming evidence/validation, `trials.jsonl`, `comparison.json`, and
+`comparison.md`. Raw failures remain visible; summaries use successful matched
+pairs. No normalization or automatic human justification is applied. First
+available text, speech-relative first text, call-to-first-text, setup, LBL, UPL,
+and strict WER are distinguished. Repeated trials of six recordings do not
+establish a general performance ranking.
+
+`run_full.py --chunk-ms 20` changes streaming chunk size only (REST stays unchanged);
+the default remains 100 ms. Optional API service ordering follows the requested
+streaming order after baseline realtime, which still runs first for shared anchors.
+
+### Speaker diarization and explicit language modes
+
+**Monolingual is now the default:** the request specifies the sample's declared
+language. Use `--language-mode multilingual` only when testing LID/multilingual
+recognition, and choose `--lid-strategy at-start|continuous|native` explicitly.
+At-start identifies one language; continuous supports changes between utterances;
+native uses the model's own multilingual behavior. These are not equivalent.
+SDK continuous LID is not a promise of within-sentence code-switch detection.
+Configured languages/hints are never scored as detected-language output.
+
+The current conservative configuration surface is below. Unsupported or unverified
+combinations fail preflight before paid calls; there is no skipping or model fallback.
+
+| Service | Monolingual | Multilingual strategy | Diarization |
+|---|---|---|---|
+| `fast_default` | Specified locale | `at-start`, `native` | Yes |
+| `fast_llm` | Specified locale | `native` | Yes |
+| `fast_mai_1_5` | Specified base language | Not enabled | Not enabled |
+| `fast_mai_2` | Specified base language | `native` | Yes |
+| `realtime` | Specified locale | `at-start`, `continuous` | Use the separate service below |
+| `realtime_refine` | Specified locale | Not enabled | Not enabled |
+| `realtime_diarization` (optional) | Specified locale | Not enabled | SDK ConversationTranscriber |
+| `realtime_mai_2` | Not verified | `native` | Not verified |
+| `realtime_mai_2_api` (optional) | Documented language hint, not a hard lock | `native` | Not verified |
+
+`fast_mai` has been removed; `whisper_v3` remains an unimplemented stub.
+Service defaults are unchanged, so a bare default run now rejects automatic-only
+`realtime_mai_2` in monolingual mode. Use an explicit compatible subset rather than
+assuming that default selection can mix language modes. Historical automatic
+`fast_llm` runs must not be mislabeled as new monolingual runs.
+
+Initial fixed-language/candidate configuration is conservatively limited to
+`en-US`, `en-GB`, `de-DE`, `es-ES`, `fr-FR`, `it-IT`, and `zh-CN`; this is not an exhaustive
+Azure language-support claim. Candidate LID accepts distinct base languages
+(2-4 at-start; 2-10 continuous). SDK continuous LID additionally requires a matching
+resource's documented `/speech/universal/v2` endpoint to be configured explicitly.
+The SDK diarization path currently rejects LID, phrase hints, and max-speaker controls
+until their combined behavior is verified. REST `--max-speakers` accepts 2-35.
+No new live capability smoke tests are implied by these offline-validated integrations.
+
+#### User audio and optional annotations
+
+Use `--manifest` for an exact, versioned JSONL selection. Audio paths are relative
+to the manifest. Do not combine it with `--languages`, `--testdata-dir`, or an explicit
+`--max-per-dataset`; each record
+declares its own requested language and scenario. No evaluation audio is synthesized.
+
+Example **schema**, not an included annotated dataset:
+
+```json
+{"schema_version":1,"sample_id":"meeting-1","audio":"meeting.wav","requested_language":"en-GB","scenario":"single-language","reference":{"language":"en-GB","segments":[{"text":"Hello there","speaker":"speaker-a","start_s":0.2,"end_s":1.1},{"text":"Good morning","speaker":"speaker-b","start_s":1.3,"end_s":2.2}]}}
+```
+
+- Omit `reference` entirely for no-ground-truth comparison. Filenames are not references.
+- Flat `reference.text` enables WER. Ordered `reference.segments` with text/speaker
+  labels enable wDER; segments may also be individual words. Real timestamps are
+  optional for wDER and required for duration-weighted segment LID scoring.
+- `reference.language` is the clip-level truth for single-language audio.
+  For switching audio, use `scenario: "language-switching"` and reference segment
+  language tags. Do not pass reference labels as automatic candidate settings.
+- Reference text must agree with reference segments when both are supplied.
+  Explicit wDER scoring rejects missing/unknown speaker labels and timed overlap.
+- No-reference reports show transcripts, speaker counts/switches, unknown labels,
+  detected languages, and aligned pairwise disagreement. They do not claim accuracy,
+  wDER, or a winning endpoint.
+
+With user-provided data, preflight and run diarization as follows:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\validate_benchmark.py preflight --manifest D:\audio\meeting.jsonl --services fast_default realtime_diarization --diarization --score-wder --workers 1
+.\.venv\Scripts\python.exe run_full.py --manifest D:\audio\meeting.jsonl --services fast_default realtime_diarization --diarization --score-wder --workers 1 --tag speakers
+```
+
+Omit `--score-wder` for descriptive comparison without speaker references.
+For explicit LID testing:
+
+```powershell
+.\.venv\Scripts\python.exe run_full.py --manifest D:\audio\languages.jsonl --services fast_default --language-mode multilingual --lid-strategy at-start --lid-candidates en-GB de-DE --workers 1
+```
+
+#### Metric and artifact contract
+
+Versioned evaluations retain the ordinary ASR reporting contract, not just
+speaker/language evidence: source/set composition, per-set/configuration accuracy,
+latency mean/median/p90 with observation counts and anchor definitions,
+reference-backed best/median/worst cases with audio links, concrete cross-model
+differences and edit patterns, and explicit failures/provenance. Reference-free
+comparisons remain descriptive. Negative LBL is explained as a final event before
+audio upload ended, not negative wall-clock latency.
+
+`build_evaluation_report` regenerates one exact run locally.
+`build_combined_evaluation_report` accepts an explicit list of CSV paths, keeping
+configurations separate; optional `retry_csv_paths` appear only as a separate
+appendix and never replace original rows. Smoke CSVs are not implicitly included.
+Neither function changes scores or calls Speech services. Full report content and
+arithmetic still require the skill's verification gate; generation alone does not
+set `report_verified`.
+
+- Chinese evaluations use CER as primary accuracy, plus character-normalized SER
+  and latency. CER applies NFKC, lowercase, and removal of punctuation/whitespace;
+  reports provide micro/macro CER and CSVs retain character edit counts. Existing
+  whitespace WER remains explicitly labeled and is not Chinese word-segmented WER.
+  CER and Chinese SER always preserve this strict character policy even when permitted WER loose
+  matching is applied; it is not silently recomputed with compound-word rules.
+
+- wDER = speaker errors / aligned correct-or-substituted word pairs, after one
+  optimal one-to-one speaker mapping per recording. Insertions/deletions remain
+  in WER and alignment coverage, not the wDER denominator. Zero aligned pairs
+  means unavailable, not 0. Reports show micro/macro wDER and counts.
+- Tokenization uses the existing whitespace-based WER normalization, retaining
+  speaker ownership. This does not provide a new tokenizer for unsegmented scripts.
+- Clip LID accuracy distinguishes base language from exact locale. Continuous/native
+  segment accuracy is correct labeled overlap duration / labeled reference duration;
+  missing coverage is explicit. Missing returned labels or required timing means
+  unavailable, not a fabricated score.
+- Version-2 run metadata fingerprints options, requested languages, PCM, and
+  references. CSV and sidecars include configuration identities. Resume cannot
+  mix modes or changed input/reference data; historical artifacts remain readable.
+- `_evaluation.jsonl` retains final speaker/language segments and scoring evidence
+  for both REST and SDK. Reports expose strict/reference-free status, failures,
+  missing labels, and correlation IDs; evaluation report generation is local.
+- Full selected audio is sent for manifest, diarization, and multilingual evaluation.
+  No reference-derived trimming is applied to these requests.
+- Loose matching remains available for ordinary unannotated monolingual ASR,
+  but is rejected for diarization, multilingual, or speaker/segment-annotated runs.
 
 ### Validation and resume
 
@@ -232,7 +433,7 @@ Custom Copilot skill that reads a benchmark CSV + auto reports and writes a **9-
 
 1. Recap aggregate metrics from report
 2. Identify where WER is misleading (short utterances, hallucinations)
-3. Flag fast_llm language confusion (no locale set, auto-detection failures)
+3. Flag language confusion in explicitly selected multilingual/LID runs
 4. Summarize genuine service disagreements
 5. Analyze error shape (INS/DEL/SUB breakdown)
 6. Interpret latency with network context
@@ -308,13 +509,14 @@ Phrase lists influence recognition but are not a guaranteed output-formatting ru
 | Service | Description |
 |---------|-------------|
 | `fast_default` | Azure Fast Transcription (REST, api-version 2024-11-15). Locale-locked. |
-| `fast_llm` | Fast Transcription + LLM enhanced mode (preview). **No locale set — auto-detects.** May hallucinate or confuse languages (intentional for benchmarking). |
-| `fast_mai` | Retired MAI-Transcribe-1; explicit-only legacy diagnostics, excluded from defaults. |
+| `fast_llm` | Fast Transcription + LLM enhanced mode (preview). Specified locale by default; native auto-detection only when multilingual mode is requested. |
 | `fast_mai_1_5` | Fast Transcription + MAI-Transcribe-1.5 model (preview). Supports phrase list and transcribe style. |
 | `fast_mai_2` | Fast Transcription + MAI-Transcribe-2 model (preview). Supports 60 languages, keyword biasing, diarization, word timestamps, and configurable transcription style. |
 | `realtime` | Speech SDK continuous recognition (WebSocket, word-level timestamps). |
 | `realtime_refine` | Realtime + Post-Stream Refinement (MRS preview, SDK ≥ 1.49.0). |
 | `realtime_mai_2` | MAI-Transcribe-2-Streaming preview via Speech SDK >=1.52.0; included in default runs. |
+| `realtime_mai_2_api` | Optional MAI-Transcribe-2-Streaming Realtime WebSocket API; requires endpoint/deployment settings and the shared Speech key. Excluded from defaults. |
+| `realtime_diarization` | Optional Speech SDK ConversationTranscriber for mixed-audio speaker labeling. Requires `--diarization`; excluded from defaults. |
 | `whisper_v3` | Unimplemented stub; selecting it produces an explicit service failure. |
 
 ---
@@ -453,7 +655,7 @@ for csv_path in sorted(Path('results').glob('asr-bench_*.csv')):
 
 ## Important Notes
 
-- **`fast_llm` caveat**: no locale set, relies on language auto-detection. May produce wrong-language text, especially for non-English audio. Intentional for benchmarking auto-detection behavior.
+- **Language-mode caveat**: old `fast_llm` runs omitted locale; new runs specify it by default. Test automatic detection explicitly and do not pool historical and new modes.
 - **TTS audio**: bundled testset uses Azure TTS (clean, consistent). WER will be lower than on real human recordings.
 - **Latency is network-dependent**: absolute UPL/LBL numbers depend on distance to Azure region. Use *relative* comparisons between services.
 - **Short utterances amplify WER**: smart speaker commands are 3–10 words. Single word error = 10–33% WER. Consider SER alongside WER.

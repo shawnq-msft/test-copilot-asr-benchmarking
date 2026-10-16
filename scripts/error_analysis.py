@@ -97,6 +97,10 @@ def _agg_breakdown(ok_rows: list[dict]) -> tuple[str, str, str]:
 
 
 def main(csv_path: Path, out_path: Path) -> None:
+    from benchmark.evaluation import evaluation_path, build_evaluation_report
+    if evaluation_path(csv_path).exists():
+        build_evaluation_report(csv_path, out_path, details=True)
+        return
     rows = []
     with csv_path.open("r", encoding="utf-8", newline="") as f:
         for r in csv.DictReader(f):

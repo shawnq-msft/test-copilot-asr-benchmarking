@@ -12,3 +12,17 @@ best/median/worst cases and cross-service disagreements, including `realtime_mai
 Disclose service failures, missing audio/IDs/timestamps, and unknown/unpaced provenance.
 No recognition or TTS calls are needed. Report generation retains network context
 probes, so do not call that operation offline. Do not auto-justify.
+
+For versioned speaker/language evaluations, read the matching `_evaluation.jsonl`.
+Separate modes/strategies and labeled versus no-reference results. No-reference
+comparisons have no wDER/LID accuracy or best-service rankings. Configured locales
+are not detected language IDs. This evaluation report path is local; the network
+context caveat above applies to historical reports.
+
+Before delivery, perform the skill's
+[verification gate](../skills/asr-benchmark/references/stages.md#verification-before-delivery).
+Read the generated report/error analysis, verify required contents and recompute
+reported aggregates/examples from the exact artifacts. Preserve applicable ASR
+analysis when using the specialized evaluation renderer. Persist separate
+verification JSON; file existence or artifact-validator success alone cannot
+establish report completeness. Do not substitute a summary table for full reports.

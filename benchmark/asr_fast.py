@@ -59,6 +59,21 @@ def _streaming_upload(pcm: bytes, definition_obj: dict, url: str,
                       sample: Sample,
                       key: str = None,
                       vad_end_s: float | None = None) -> AsrResult:
+    options = sample.evaluation_options
+    if options is not None:
+        definition_obj = dict(definition_obj)
+        if options.language_mode == "monolingual":
+            definition_obj["locales"] = [sample.locale.split("-")[0] if service.startswith("fast_mai") else sample.locale]
+        elif options.lid_strategy == "at-start":
+            definition_obj["locales"] = list(options.candidates)
+        else:
+            definition_obj.pop("locales", None)
+        if options.diarization:
+            definition_obj["diarization"] = {"enabled": True}
+            if options.max_speakers is not None:
+                definition_obj["diarization"]["maxSpeakers"] = options.max_speakers
+        if options.diarization or options.language_mode == "multilingual" or sample.manifest_hash:
+            vad_end_s = None
     if key is None:
         key = AZURE_SPEECH_KEY
     if vad_end_s is not None:
@@ -129,6 +144,22 @@ def _streaming_upload(pcm: bytes, definition_obj: dict, url: str,
 
     upl_self_ms = None
     phrases = data.get("phrases") or []
+    segments = []
+    try:
+        for phrase in phrases:
+            if not isinstance(phrase, dict) or not isinstance(phrase.get("text"), str):
+                raise ValueError("REST phrase must contain text")
+            offset, duration = phrase.get("offsetMilliseconds"), phrase.get("durationMilliseconds")
+            segments.append({
+                "text": phrase["text"], "speaker": phrase.get("speaker"),
+                "language": phrase.get("locale"),
+                "start_s": offset / 1000 if offset is not None else None,
+                "end_s": (offset + duration) / 1000 if offset is not None and duration is not None else None,
+                "source": "rest_final_phrase", "raw": phrase,
+            })
+    except (ValueError, TypeError) as exc:
+        return AsrResult(service, text, first_latency_ms, lbl_ms, f"invalid_phrase: {exc}",
+                         request_id=request_id)
     if phrases:
         last = phrases[-1]
         off_ms = last.get("offsetMilliseconds")
@@ -149,7 +180,7 @@ def _streaming_upload(pcm: bytes, definition_obj: dict, url: str,
                      upl_ms=upl_ms, upl_self_ms=upl_self_ms,
                      request_id=request_id,
                      upl_anchor=upl_anchor,
-                     vad_truncated_s=vad_end_s)
+                     vad_truncated_s=vad_end_s, segments=segments)
 
 
 def transcribe_fast_default(sample: Sample, pace: bool = True,

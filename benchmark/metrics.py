@@ -25,6 +25,23 @@ def wer(reference: str, hypothesis: str) -> float:
     return Levenshtein.distance(ref_words, hyp_words) / len(ref_words)
 
 
+def normalize_characters(text: str) -> str:
+    return "".join(normalize_text(text).split())
+
+
+def cer_breakdown(reference: str, hypothesis: str) -> dict:
+    ref, hyp = normalize_characters(reference), normalize_characters(hypothesis)
+    operations = Levenshtein.editops(ref, hyp)
+    counts = {
+        "char_ins": sum(op.tag == "insert" for op in operations),
+        "char_del": sum(op.tag == "delete" for op in operations),
+        "char_sub": sum(op.tag == "replace" for op in operations),
+        "ref_chars": len(ref),
+    }
+    errors = counts["char_ins"] + counts["char_del"] + counts["char_sub"]
+    return {**counts, "cer": errors / len(ref) if ref else (0.0 if not hyp else 1.0)}
+
+
 def wer_breakdown(reference: str, hypothesis: str) -> dict:
     ref_words = normalize_text(reference).split()
     hyp_words = normalize_text(hypothesis).split()

@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from urllib.parse import urlparse
 
 from dotenv import load_dotenv
+from .eval_options import EvaluationOptions
 
 load_dotenv()
 
@@ -21,6 +22,8 @@ REFINE_AZURE_ENDPOINT = ((os.getenv("REFINE_AZURE_SPEECH_ENDPOINT") or "").rstri
 REFINE_AZURE_REGION = os.getenv("REFINE_AZURE_SPEECH_REGION") or AZURE_SPEECH_REGION
 
 MAI_STREAMING_MODEL = "mai-transcribe-2-streaming"
+MAI_REALTIME_ENDPOINT = (os.getenv("MAI_REALTIME_ENDPOINT") or "").rstrip("/")
+MAI_REALTIME_DEPLOYMENT = os.getenv("MAI_REALTIME_DEPLOYMENT") or ""
 
 FAST_API_VERSION = "2024-11-15"
 LLM_API_VERSION = "2025-10-15"
@@ -39,17 +42,19 @@ SEGMENTATION_SILENCE_MS = 500
 SERVICES = (
     "fast_default",
     "fast_llm",
-    "fast_mai",
     "fast_mai_1_5",
     "fast_mai_2",
     "realtime",
     "realtime_refine",
     "realtime_mai_2",
+    "realtime_mai_2_api",
+    "realtime_diarization",
     "whisper_v3",
 )
 
-STREAMING_SERVICES = ("realtime", "realtime_refine", "realtime_mai_2")
-DEFAULT_SERVICES = tuple(service for service in SERVICES if service != "fast_mai")
+STREAMING_SERVICES = ("realtime", "realtime_refine", "realtime_mai_2", "realtime_mai_2_api", "realtime_diarization")
+DEFAULT_SERVICES = tuple(service for service in SERVICES
+                         if service not in ("realtime_mai_2_api", "realtime_diarization"))
 
 # Speech regions documentation, verified 2026-10-10. Used for warnings, not routing.
 ENHANCED_REST_REGIONS = ("centralindia", "eastus", "northeurope", "southeastasia", "westus", "westus2")
@@ -93,6 +98,14 @@ class Sample:
     first_word_start_s: float | None = None
     last_word_end_s: float | None = None
     boundary_fix: dict | None = None
+    reference_available: bool = True
+    reference_segments: list[dict] | None = None
+    reference_language: str | None = None
+    scenario: str = "single-language"
+    manifest_hash: str | None = None
+    manifest_path: str | None = None
+    audio_path: str | None = None
+    evaluation_options: EvaluationOptions | None = None
 
 
 @dataclass
@@ -113,6 +126,7 @@ class AsrResult:
     boundary_fix: dict | None = None
     vad_truncated_s: float | None = None
     streaming_evidence: dict | None = None
+    segments: list[dict] | None = None
 
 
 def assert_credentials(services: tuple[str, ...] = DEFAULT_SERVICES) -> None:
@@ -123,7 +137,7 @@ def assert_credentials(services: tuple[str, ...] = DEFAULT_SERVICES) -> None:
             continue
         if service == "realtime_refine":
             key, endpoint, region = REFINE_AZURE_KEY, REFINE_AZURE_ENDPOINT, REFINE_AZURE_REGION
-        elif service in ("fast_llm", "fast_mai", "fast_mai_1_5", "fast_mai_2"):
+        elif service in ("fast_llm", "fast_mai_1_5", "fast_mai_2"):
             key, endpoint, region = LLM_AZURE_KEY, LLM_AZURE_ENDPOINT, LLM_AZURE_REGION
         else:
             key, endpoint, region = AZURE_SPEECH_KEY, AZURE_SPEECH_ENDPOINT, AZURE_SPEECH_REGION

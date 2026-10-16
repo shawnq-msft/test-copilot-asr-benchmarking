@@ -12,15 +12,31 @@ This project benchmarks Azure Speech services against voice command datasets, co
 
 **Services under test:**
 - `fast_default` — Azure Fast Transcription (REST, locale-locked)
-- `fast_llm` — Fast Transcription + LLM enhanced mode (preview, no locale set → auto-detection)
-- `fast_mai` — Fast Transcription + MAI-Transcribe-1 model (deprecated Aug 20, 2026)
+- `fast_llm` — Fast Transcription + LLM enhanced mode (preview; specified language by default, automatic only on explicit multilingual requests)
 - `fast_mai_1_5` — Fast Transcription + MAI-Transcribe-1.5 model (preview)
 - `fast_mai_2` — Fast Transcription + MAI-Transcribe-2 model (preview)
 - `realtime` — Speech SDK continuous recognition (WebSocket, word-level timestamps)
 - `realtime_refine` — Realtime + Post-Stream Refinement (MRS preview, SDK ≥1.49.0)
 - `realtime_mai_2` — MAI-Transcribe-2-Streaming via Speech SDK >=1.52.0 (public preview; included in defaults)
+- `realtime_mai_2_api` — Opt-in direct MAI Realtime WebSocket API; same resource key, plus `MAI_REALTIME_ENDPOINT` and an existing `MAI_REALTIME_DEPLOYMENT`; not included in defaults.
+- `realtime_diarization` — Optional SDK ConversationTranscriber for mixed-audio diarization; requires `--diarization`.
 
 ## Benchmark workflow routing
+
+Monolingual is the default. Multilingual tests require an explicit
+`--language-mode multilingual --lid-strategy at-start|continuous|native`.
+These strategies are not interchangeable. Preflight rejects unsupported selected
+service/mode/diarization combinations; do not skip them or substitute models.
+In particular, the current MAI streaming SDK configuration is native automatic only,
+so select a compatible monolingual subset rather than running all defaults blindly.
+
+For wDER, require user-provided speaker-labeled reference audio via `--manifest`
+and `--diarization --score-wder`. No synthetic evaluation corpus or inferred ground
+truth. Without references, compare outputs without accuracy/wDER rankings.
+LID scores require returned detected-language labels and independent references;
+a specified locale or language hint is not a detection result.
+Preserve `_evaluation.jsonl` and variant-aware metadata. Do not apply loose matching
+to diarization, multilingual, or segment-annotated runs.
 
 Use [asr-benchmark](skills/asr-benchmark/SKILL.md) for end-to-end runs or individual
 setup, generation, smoke, run, resume, normalize, analysis, and validation requests.
@@ -30,8 +46,8 @@ sample/service keys, preserve partial failures and strict backups, and keep paci
 provenance. No automatic justification: invoke `asr-justify` only when explicitly requested.
 
 Default services include the `whisper_v3` stub, which must be disclosed.
-Retired `fast_mai` is excluded from defaults but remains explicitly selectable for
-legacy diagnostics; never substitute another model under that service name.
+Deprecated `fast_mai` has been removed and cannot be selected. Historical results
+remain readable; never substitute another model under that service name.
 A supported-service smoke subset must be explicit.
 
 REST enhanced modes and MAI streaming have different regional support. As verified
@@ -97,12 +113,13 @@ For each run `<tag>_<locale>_<timestamp>`:
 
 ## Important Caveats
 
-- `fast_llm` has **no locale set** — it auto-detects language and may hallucinate or confuse languages
+- Historical `fast_llm` runs omitted locale; new runs specify it by default. Keep modes separate when comparing results.
 - Latency numbers are network-dependent; relative comparisons between services are what matter
 - WER on short utterances (3-10 words) is noisy — a single word error gives 10-33% WER
 - UPL for fast_* services is anchored on the realtime SDK's word-end timestamp for fair comparison
 - Streaming sidecars now include `service` and available word/completion evidence for all streaming modes; legacy untagged entries mean baseline realtime.
 - `realtime_mai_2` uses the documented SDK model selector, without unverified locale/phrase/segmentation/detailed-word options. Missing model timestamps are not fabricated. MAI-only runs may lack first latency/UPL.
+- Compare SDK/API through `scripts/compare_mai_transports.py` with matched paced chunks, shared resource/audio, excluded warm-ups, and alternating order. Report call-to-first-text as well as audio-relative timing; API commit and SDK EOF differ. SDK regional access alone does not prove direct API access.
 - `--no-pace` is not valid for comparative latency claims. Inspect run metadata and actual anchor sources.
 - Resume fills missing rows with matching run metadata; it does not retry existing failures and cannot append to normalized CSVs. Use fresh narrow runs for failures or legacy CSVs without provenance.
 
