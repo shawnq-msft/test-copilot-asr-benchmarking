@@ -83,8 +83,7 @@ class OptionsTests(unittest.TestCase):
         validate_options(EvaluationOptions(), ["fast_default", "fast_llm", "fast_mai_2"], ["en-GB"])
         with self.assertRaisesRegex(ValueError, "explicit"):
             validate_options(EvaluationOptions(language_mode="multilingual"), ["realtime"], ["en-GB"])
-        with self.assertRaisesRegex(ValueError, "unsupported"):
-            validate_options(EvaluationOptions(), ["realtime_mai_2"], ["en-GB"])
+        validate_options(EvaluationOptions(), ["realtime_mai_2"], ["en-GB"])
         validate_options(EvaluationOptions("multilingual", "native"), ["realtime_mai_2"], [])
         self.assertNotIn("realtime_diarization", config.DEFAULT_SERVICES)
 
@@ -295,7 +294,7 @@ class ManifestAndRunTests(unittest.TestCase):
     def test_cli_rejects_before_adapter_calls(self):
         self.load()
         argv = ["run_full.py", "--manifest", str(self.manifest), "--services", "realtime_mai_2",
-                "--output-dir", str(self.root / "out")]
+                "--diarization", "--output-dir", str(self.root / "out")]
         with patch("sys.argv", argv), patch.object(run_full, "assert_credentials"), \
                 patch.object(run_full, "run_benchmark") as execute, redirect_stdout(io.StringIO()), \
                 redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):

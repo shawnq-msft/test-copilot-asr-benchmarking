@@ -41,7 +41,8 @@ the six implemented monolingual configurations with paced audio:
 ```
 
 This explicit service list excludes the `whisper_v3` stub,
-opt-in `realtime_mai_2_api` / `realtime_diarization`, and automatic-only `realtime_mai_2`.
+opt-in `realtime_mai_2_api` / `realtime_diarization` / `azure_whisper`, and `realtime_mai_2`.
+The SDK MAI service can also be selected in monolingual mode using base language codes.
 Deprecated MAI-Transcribe-1 (`fast_mai`) has been removed; MAI 1.5 and 2 remain available.
 The latest full-local-Xiaomi check covered **one recording across all seven modes**:
 7/7 successful service calls, not a statistically meaningful accuracy or latency ranking.
@@ -111,16 +112,21 @@ not a production SLA. It uses the same `AZURE_SPEECH_KEY`, `AZURE_SPEECH_REGION`
 and `AZURE_SPEECH_ENDPOINT` as baseline realtime. No separate MAI key or endpoint
 is required: use a Speech resource in a documented supported region, with its
 matching key and endpoint.
-Its currently verified SDK configuration is automatic/native multilingual only.
-Explicitly request that mode; ordinary runs now default to monolingual and reject
-unsupported combinations rather than silently using auto-detection.
+Monolingual mode sets `speech_recognition_language` to the base language code
+(`zh-CN` -> `zh`, `en-GB` -> `en`), not the full locale. A paced live check with
+SDK 1.52.0 on 2026-10-22 confirmed outgoing `speech.context` contained
+`phraseDetection.language="zh"` and the selected MAI model, with a final transcript.
+This verifies an explicitly sent/accepted configuration, not an absolute language
+lock or a guarantee of transcription accuracy. The streaming sidecar records the
+requested locale and SDK language code. Explicit multilingual/native mode leaves
+the language unset; it is not a fallback for monolingual failures.
 
 ```powershell
 .\.venv\Scripts\python.exe -X utf8 scripts\validate_benchmark.py preflight --languages en-GB --services realtime_mai_2 --language-mode multilingual --lid-strategy native --max-per-dataset 2 --workers 1
 .\.venv\Scripts\python.exe -X utf8 run_full.py --languages en-GB --services realtime_mai_2 --language-mode multilingual --lid-strategy native --max-per-dataset 2 --workers 1 --tag streaming-smoke
 ```
 
-The adapter does not enable unverified model language-locking, phrase-list,
+The adapter does not enable unverified phrase-list,
 segmentation or detailed-word options. Explicit phrase hints with this service
 are rejected. Baseline realtime boundaries anchor first latency/UPL when available.
 In a MAI-only run, absent model word timing means these metrics are unavailable;
@@ -130,6 +136,27 @@ The retired `fast_mai` service is no longer selectable. Historical results remai
 readable and are never mapped to another model. The unimplemented
 `whisper_v3` stub remains in defaults and is disclosed. Choose an explicit service
 subset for a smoke test; a default run with service failures fails validation.
+
+### Azure OpenAI Whisper (optional)
+
+Select `--services azure_whisper` for an existing Azure OpenAI `whisper`
+deployment. This is **not** the unimplemented `whisper_v3` service; no historical
+results are relabeled. Configure `WHISPER_AZURE_KEY`, `WHISPER_AZURE_ENDPOINT`,
+`WHISPER_AZURE_DEPLOYMENT`, and the actual `WHISPER_AZURE_MODEL_VERSION` (default
+`001`) using the same resource. Run metadata and reports retain the deployment,
+endpoint, model version, API version and requested base language code.
+
+The adapter sends a PCM WAV multipart upload to the Azure audio transcription API.
+Pacing is enabled by default; first latency is whole-request time to the final
+JSON response, not a first partial. LBL starts at the end of upload, and UPL
+requires an available baseline anchor. Word timestamps and detected language are
+not inferred. Files over 25 MB, phrase hints, multilingual/LID and diarization
+are rejected rather than silently split or substituted. The adapter is opt-in
+and does not change default service selection.
+`WHISPER_AZURE_REQUESTS_PER_MINUTE` defaults to 3; set it to the actual deployment
+quota. Requests within one runner process are spaced before latency measurement
+starts. Do not run multiple processes against that quota without coordinating
+their traffic. At 3 requests/minute, 5,000 recordings require at least 27.8 hours.
 
 ### Avoiding REST enhanced-mode HTTP 400 errors
 
@@ -237,13 +264,13 @@ combinations fail preflight before paid calls; there is no skipping or model fal
 | `realtime` | Specified locale | `at-start`, `continuous` | Use the separate service below |
 | `realtime_refine` | Specified locale | Not enabled | Not enabled |
 | `realtime_diarization` (optional) | Specified locale | Not enabled | SDK ConversationTranscriber |
-| `realtime_mai_2` | Not verified | `native` | Not verified |
+| `realtime_mai_2` | Specified base language code; not a hard lock | `native` | Not verified |
 | `realtime_mai_2_api` (optional) | Documented language hint, not a hard lock | `native` | Not verified |
+| `azure_whisper` (optional) | Specified base language code | Not enabled | Not enabled |
 
 `fast_mai` has been removed; `whisper_v3` remains an unimplemented stub.
-Service defaults are unchanged, so a bare default run now rejects automatic-only
-`realtime_mai_2` in monolingual mode. Use an explicit compatible subset rather than
-assuming that default selection can mix language modes. Historical automatic
+Service defaults are unchanged, including the failing `whisper_v3` stub.
+Use an explicit compatible subset; do not mix language modes. Historical automatic
 `fast_llm` runs must not be mislabeled as new monolingual runs.
 
 Initial fixed-language/candidate configuration is conservatively limited to
@@ -306,6 +333,20 @@ comparisons remain descriptive. Negative LBL is explained as a final event befor
 audio upload ended, not negative wall-clock latency.
 
 `build_evaluation_report` regenerates one exact run locally.
+Main reports use the fixed **classic-v1** Python renderer, based on the historical
+benchmark template: Endpoints under test, Datasets under test, Results, Speech
+boundaries, and Latency definitions with the original timeline. The Results table
+keeps its original columns and mean/p90 formatting. Versioned runs append the
+evaluation details (CER, timing counts/medians, variants, examples and failures)
+instead of replacing the main template. REST request-to-response timing is not
+displayed as streaming First Latency. Missing/reference-free scores stay
+unavailable; variants are never pooled. Local evaluation rendering does not probe
+the current network or present current adapter configuration as historical fact.
+Agents invoke the renderer; they must not rewrite the main report or prepend
+ad-hoc tables/notes. Interpretation belongs in a separately requested justification.
+Template changes require regression tests; rendering does not alter pacing,
+transcripts, scores or recorded measurements.
+
 `build_combined_evaluation_report` accepts an explicit list of CSV paths, keeping
 configurations separate; optional `retry_csv_paths` appear only as a separate
 appendix and never replace original rows. Smoke CSVs are not implicitly included.

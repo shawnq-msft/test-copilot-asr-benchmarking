@@ -86,6 +86,8 @@ def _run_realtime(sample: Sample, *, service_name: str, key: str,
         speech_config = speechsdk.SpeechConfig(subscription=key, region=region)
     if model:
         speech_config.model = model
+        if sample.evaluation_options and sample.evaluation_options.language_mode == "monolingual":
+            speech_config.speech_recognition_language = sample.locale.split("-")[0]
     else:
         if sample.evaluation_options is None or sample.evaluation_options.language_mode == "monolingual":
             speech_config.speech_recognition_language = sample.locale
@@ -300,6 +302,10 @@ def _run_realtime(sample: Sample, *, service_name: str, key: str,
 
     evidence = {
         "model": model,
+        "requested_language": (sample.locale if sample.evaluation_options
+                               and sample.evaluation_options.language_mode == "monolingual" else None),
+        "sdk_language_code": (sample.locale.split("-")[0] if model and sample.evaluation_options
+                              and sample.evaluation_options.language_mode == "monolingual" else None),
         "partial_count": state["partial_count"],
         "final_count": len(state["finals"]),
         "completed": state["completed"],

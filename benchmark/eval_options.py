@@ -32,9 +32,10 @@ CAPABILITIES = {
     "realtime": ({"monolingual", "at-start", "continuous"}, False),
     "realtime_refine": ({"monolingual"}, False),
     "realtime_diarization": ({"monolingual"}, True),
-    "realtime_mai_2": ({"native"}, False),
+    "realtime_mai_2": ({"monolingual", "native"}, False),
     "realtime_mai_2_api": ({"monolingual", "native"}, False),
     "whisper_v3": ({"monolingual"}, False),
+    "azure_whisper": ({"monolingual"}, False),
 }
 VERIFIED_LOCALES = frozenset(("en-US", "en-GB", "de-DE", "es-ES", "fr-FR", "it-IT", "zh-CN"))
 
@@ -74,6 +75,8 @@ def validate_options(options: EvaluationOptions, services, locales, *, phrases=(
         if service not in CAPABILITIES:
             raise ValueError(f"Unknown service: {service}")
         strategies, speakers = CAPABILITIES[service]
+        if service == "azure_whisper" and phrases:
+            raise ValueError("azure_whisper: phrase lists are not supported by this adapter")
         if strategy not in strategies:
             raise ValueError(f"{service}: {strategy} is unsupported/unverified; "
                              f"supported configurations: {', '.join(sorted(strategies))}")

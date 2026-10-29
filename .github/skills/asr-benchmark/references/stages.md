@@ -126,10 +126,12 @@ labels stay unavailable. Never score a configured locale as detected language.
      sending audio. Keep `zh-CN` as the benchmark selection locale, not the
      literal API field. Verify supported values for other requested languages;
      do not silently guess a replacement for an unsupported language.
-   - SDK `realtime_mai_2`: fixed-language operation remains unverified and is not
-     exposed by this adapter. Block an ordinary fixed-language run before paid
-     calls; ask for an approved compatible route/subset or a separate explicit
-     native-auto experiment. A generic SDK locale assignment is not verification.
+   - SDK `realtime_mai_2`: monolingual mode sets `speech_recognition_language`
+     to the base language code (`zh-CN` -> `zh`, `en-GB` -> `en`), not a full locale.
+     A 2026-10-22 SDK 1.52.0 live check verified outgoing `speech.context`
+     `phraseDetection.language="zh"` with a final transcript. Preserve the actual
+     code in streaming evidence; sent/accepted configuration does not prove an
+     absolute language lock. Reject failures instead of falling back to native-auto.
 3. For the direct API, verify the effective request and the
    `streaming_evidence.negotiated_input.transcription.language` from
    `session.updated`. Require an exact match before audio. Record any rejection,
@@ -235,6 +237,14 @@ The current validator checks report existence/nonzero size, not semantic
 completeness. Its `ok` result does not replace the verification gate below.
 
 ## Normalize and refresh reports
+
+Use the fixed classic-v1 main report renderer, not agent-authored Markdown.
+The historical main sections, Results columns (mean/p90) and latency timeline
+are stable for legacy and versioned single-run reports. Evaluation details,
+including CER and timing observation counts/medians, are appended after those
+sections. Do not prepend ad-hoc summaries or substitute the detailed error
+analysis/combined-analysis layout for a main report. Presentation fixes belong
+in rendering code and regression tests, not in CSVs or pacing adapters.
 
 Diarization, multilingual, and segment-annotated evaluations retain strict token
 ownership; loose matching is rejected. Generate their evaluation reports directly.

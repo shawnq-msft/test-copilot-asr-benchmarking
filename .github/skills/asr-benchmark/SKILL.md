@@ -26,13 +26,27 @@ Read [stage procedures](references/stages.md) only for the requested stages.
 Do not advance to unrequested stages except prerequisites needed for the request.
 Existing numbered prompts remain independent entry points into this procedure.
 
+## Fixed report rendering
+
+Generate main reports with `benchmark.report.build_report` (or
+`benchmark.evaluation.build_evaluation_report` for versioned runs). Both use the
+fixed classic-v1 main template: Endpoints under test, Datasets under test,
+Results, Speech boundaries, and Latency definitions with the original timeline.
+Keep the original Results columns and mean/p90 display. Versioned evidence adds
+an evaluation appendix, not an alternative main layout. Error analysis and
+explicit combined analysis retain their detailed reference-aware layout.
+Do not hand-author, replace or prepend tables/notes in the main report. Fix the
+renderer and its regression tests when necessary; keep interpretation in a
+separately requested justification. Never change pacing or measurements to fix
+report presentation.
+
 ## Establish scope once
 
 Language mode defaults to monolingual (specified language), never automatic LID.
 For multilingual requests require an explicit at-start, continuous, or native
 strategy, plus candidate locales where required. Unsupported selected combinations
 must fail preflight; do not silently skip or change modes. The MAI streaming SDK
-adapter currently exposes only native-auto; fixed-language behavior is unverified.
+adapter maps monolingual locales to base language codes (`zh-CN` -> `zh`).
 Its presence in defaults does not authorize an automatic-language exception.
 
 ### MAI-2: explicit target language is mandatory
@@ -50,11 +64,12 @@ switch to native-auto to make a selected model run.
   `invalid_value` before audio, not an automatic-language fallback.
   Require `session.updated` to confirm the requested API language; a missing,
   rewritten or rejected value blocks fixed-language testing.
-- `realtime_mai_2` (Speech SDK): do not claim that setting the generic SDK locale
-  locks this model's language. Until verified and supported by the adapter, stop
-  before paid calls and ask for an approved fixed-language-capable service/route,
-  or an explicitly authorized native-auto diagnostic. Do not silently substitute
-  a transport, resource or model.
+- `realtime_mai_2` (Speech SDK): set `speech_recognition_language` to the base
+  language code, not the full locale. A paced SDK 1.52.0 live check on 2026-10-22
+  verified outgoing `speech.context` with `phraseDetection.language="zh"` and a
+  successful MAI final transcript. Preserve the requested locale and actual code
+  in streaming evidence. This verifies sent/accepted configuration, not an
+  absolute language lock. Never silently fall back to automatic detection.
 - Unset-language/native-auto runs are exceptions only for explicitly requested
   multilingual, language-setting or transport comparisons. Record them as separate
   configurations, not as satisfying this fixed-language rule.
@@ -94,9 +109,12 @@ missing consequential choices; do not repeatedly ask for values already supplied
   Speech resource there for combined tests; verify current documentation and
   actual responses. Do not silently change resource, region, or model.
 - `realtime_mai_2` is the SDK streaming model, not REST `fast_mai_2`. Requires
-  SDK >=1.52.0. Language locking, phrase grammar, segmentation and detailed-word
-  options are not enabled for it; unsupported explicit phrase hints fail. Apply
+  SDK >=1.52.0. Monolingual mode sends a base language code; phrase grammar,
+  segmentation and detailed-word options are not enabled; explicit phrase hints fail. Apply
   the mandatory language gate above before selecting it for ordinary tests.
+- `azure_whisper` is opt-in Azure OpenAI Whisper, not the `whisper_v3` stub.
+  Verify the deployed model/version and matching endpoint/key; retain these in
+  metadata. Do not substitute Whisper `001` for v3 without user approval.
 - `realtime_mai_2_api` is an opt-in direct WebSocket adapter, not a default or an
   SDK replacement. It uses the primary Speech key and requires the same resource's
   MAI Realtime API endpoint plus a deployed model (`MAI_REALTIME_ENDPOINT`,

@@ -13,6 +13,11 @@ Disclose service failures, missing audio/IDs/timestamps, and unknown/unpaced pro
 No recognition or TTS calls are needed. Report generation retains network context
 probes, so do not call that operation offline. Do not auto-justify.
 
+Use the fixed classic-v1 main report template through the Python renderer.
+Preserve the historical sections, Results columns and latency timeline;
+versioned evaluation details are an appendix. Do not rewrite or prepend
+agent-authored report tables/notes. Keep detailed error analysis separate.
+
 For versioned speaker/language evaluations, read the matching `_evaluation.jsonl`.
 Separate modes/strategies and labeled versus no-reference results. No-reference
 comparisons have no wDER/LID accuracy or best-service rankings. Configured locales

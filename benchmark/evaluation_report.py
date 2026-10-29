@@ -26,7 +26,10 @@ def _fmt(value) -> str:
 def _link(path: Path, output: Path, label: str) -> str:
     if not path.is_file():
         return f"{_text(label)} (unavailable)"
-    relative = Path(os.path.relpath(path.resolve(), output.parent.resolve())).as_posix()
+    target, parent = path.resolve(), output.parent.resolve()
+    if target.anchor.casefold() != parent.anchor.casefold():
+        return f"[{_text(label)}]({target.as_uri()})"
+    relative = Path(os.path.relpath(target, parent)).as_posix()
     return f"[{_text(label)}]({quote(relative, safe='/.:')})"
 
 
@@ -102,7 +105,7 @@ def _table(lines: list[str], headers: list[str], rows: list[list[str]]) -> None:
 
 
 def build_reports(csv_paths: list[Path], output: Path, *, details: bool = False,
-                  retry_csv_paths: tuple[Path, ...] = ()) -> None:
+                  retry_csv_paths: tuple[Path, ...] = (), tag: str = "") -> None:
     if not csv_paths or len(set(csv_paths)) != len(csv_paths):
         raise ValueError("Select distinct, explicit evaluation CSVs")
     runs = [_read_run(p) for p in csv_paths]
@@ -147,6 +150,15 @@ def build_reports(csv_paths: list[Path], output: Path, *, details: bool = False,
                       f"endpoint: {_text(meta.get('speech_endpoint', 'unavailable'))}; paced: {meta.get('pace', 'unavailable')}; "
                       f"chunk ms: {meta.get('chunk_ms', 'unavailable')}; workers: {meta.get('workers', 'unavailable')}.",
                       f"- Options: {_text(json.dumps(meta.get('evaluation', {}).get('options', {})))}."])
+        if meta.get("experiment"):
+            lines.append(f"- Recorded experiment/derivation: {_text(json.dumps(meta['experiment']))}.")
+        if meta.get("azure_whisper"):
+            lines.append(f"- Azure Whisper (not Whisper v3): {_text(json.dumps(meta['azure_whisper']))}. "
+                         "First latency is whole-request time to the non-streaming JSON response; "
+                         "LBL is measured from the end of paced upload. No partial or word timestamps.")
+        if "mai_sdk_language_codes" in meta:
+            lines.append(f"- MAI SDK base language codes: {_text(json.dumps(meta['mai_sdk_language_codes']))}; "
+                         "empty means explicitly selected native-auto. This is a requested setting, not a detected-language label.")
         for suffix, label in ((".csv", "CSV"), ("_run.json", "metadata"), ("_validation.json", "validation"),
                               ("_words.jsonl", "streaming evidence"), ("_evaluation.jsonl", "evaluation evidence"),
                               ("_report.md", "full report"), ("_error_analysis.md", "error analysis")):
@@ -375,4 +387,15 @@ def build_reports(csv_paths: list[Path], output: Path, *, details: bool = False,
         lines.append(f"- {_link(path.with_name(path.stem + '_verification.json'), output, 'run verification')}")
     if output.name not in {p.stem + suffix for p in csv_paths for suffix in ("_report.md", "_error_analysis.md")}:
         lines.append(f"- {_link(output.with_name(output.stem + '_verification.json'), output, 'combined verification')}")
+    if not details:
+        from .report import render_report_lines
+
+        headline = []
+        for run in runs:
+            rows = [dict(r["row"], reference_available=r["entry"]["reference_available"])
+                    for r in run["records"]]
+            headline.extend(render_report_lines(run["path"], rows, tag=tag,
+                                                metadata=run["metadata"], local=True))
+            headline.append("")
+        lines = headline + ["## Evaluation appendix", ""] + lines[2:]
     output.write_text("\n".join(lines), encoding="utf-8")

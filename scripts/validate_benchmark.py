@@ -71,6 +71,11 @@ def check_selection(services: list[str], languages: list[str], limit: int,
         if phrases:
             raise ValueError("Phrase lists are not enabled for realtime_mai_2_api")
     warnings = []
+    if "azure_whisper" in services:
+        from benchmark.asr_whisper import azure_whisper_url
+        azure_whisper_url()
+        if phrases:
+            raise ValueError("azure_whisper: phrase lists are not supported by this adapter")
     if "whisper_v3" in services:
         warnings.append("whisper_v3 is a stub and will fail; choose an explicit subset to exclude it")
     enhanced = set(services) & {"fast_llm", "fast_mai_1_5", "fast_mai_2"}
@@ -117,6 +122,19 @@ def make_metadata(samples: list[Sample], services: list[str], *, pace: bool,
         "expected_keys": [[sample.dataset, sample.sample_id, service]
                           for sample in samples for service in services],
     }
+    if "azure_whisper" in services:
+        metadata["azure_whisper"] = {
+            "endpoint": config.WHISPER_AZURE_ENDPOINT,
+            "deployment": config.WHISPER_AZURE_DEPLOYMENT,
+            "model": "whisper", "model_version": config.WHISPER_AZURE_MODEL_VERSION,
+            "api_version": config.WHISPER_API_VERSION,
+            "requests_per_minute": config.WHISPER_AZURE_REQUESTS_PER_MINUTE,
+            "language_codes": sorted({s.locale.split("-")[0] for s in samples}),
+        }
+    if "realtime_mai_2" in services and evaluation_options is not None:
+        metadata["mai_sdk_language_codes"] = (
+            sorted({s.locale.split("-")[0] for s in samples})
+            if evaluation_options.language_mode == "monolingual" else [])
     if evaluation_options is not None:
         metadata["evaluation"] = {
             "options": evaluation_options.to_dict(), "scoring_version": SCORING_VERSION,
@@ -145,6 +163,8 @@ def check_resume(csv_path: Path, metadata: dict) -> None:
         saved = json.loads(saved_path.read_text(encoding="utf-8"))
         if saved.get("schema_version") != metadata.get("schema_version") or saved.get("evaluation") != metadata.get("evaluation"):
             raise ValueError("Resume evaluation mode, input/reference hashes or schema differs; use a fresh run")
+        if saved.get("azure_whisper") != metadata.get("azure_whisper"):
+            raise ValueError("Resume Azure Whisper deployment/model differs; use a fresh run")
         for field in ("data_root", "services", "languages", "pace", "seed",
                       "max_per_dataset", "phrases", "phrase_weight", "expected_keys"):
             if saved.get(field) != metadata[field]:

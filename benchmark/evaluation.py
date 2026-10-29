@@ -60,7 +60,7 @@ def evaluation_record(sample: Sample, result: AsrResult) -> dict:
         "variant_id": variant_id(sample, result.service), "options": options.to_dict(),
         "requested_language": sample.locale if options.language_mode == "monolingual" else None,
         "dataset_locale": sample.locale, "scenario": sample.scenario,
-        "language_configuration": ("language_hint" if result.service == "realtime_mai_2_api"
+        "language_configuration": ("language_hint" if result.service in ("realtime_mai_2_api", "realtime_mai_2", "azure_whisper")
                                    and options.language_mode == "monolingual" else
                                    "specified_locale" if options.language_mode == "monolingual" else options.lid_strategy),
         "reference_available": sample.reference_available,
@@ -79,9 +79,10 @@ def evaluation_record(sample: Sample, result: AsrResult) -> dict:
     }
 
 
-def build_evaluation_report(csv_path: Path, output: Path, *, details: bool = False) -> None:
+def build_evaluation_report(csv_path: Path, output: Path, *, details: bool = False,
+                            tag: str = "") -> None:
     from .evaluation_report import build_reports
-    build_reports([csv_path], output, details=details)
+    build_reports([csv_path], output, details=details, tag=tag)
 
 
 def build_combined_evaluation_report(csv_paths: list[Path], output: Path, *,

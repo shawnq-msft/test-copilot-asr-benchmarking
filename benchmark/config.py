@@ -24,6 +24,12 @@ REFINE_AZURE_REGION = os.getenv("REFINE_AZURE_SPEECH_REGION") or AZURE_SPEECH_RE
 MAI_STREAMING_MODEL = "mai-transcribe-2-streaming"
 MAI_REALTIME_ENDPOINT = (os.getenv("MAI_REALTIME_ENDPOINT") or "").rstrip("/")
 MAI_REALTIME_DEPLOYMENT = os.getenv("MAI_REALTIME_DEPLOYMENT") or ""
+WHISPER_AZURE_KEY = os.getenv("WHISPER_AZURE_KEY") or ""
+WHISPER_AZURE_ENDPOINT = (os.getenv("WHISPER_AZURE_ENDPOINT") or "").rstrip("/")
+WHISPER_AZURE_DEPLOYMENT = os.getenv("WHISPER_AZURE_DEPLOYMENT") or ""
+WHISPER_AZURE_MODEL_VERSION = os.getenv("WHISPER_AZURE_MODEL_VERSION") or "001"
+WHISPER_API_VERSION = "2024-02-01"
+WHISPER_AZURE_REQUESTS_PER_MINUTE = int(os.getenv("WHISPER_AZURE_REQUESTS_PER_MINUTE", "3"))
 
 FAST_API_VERSION = "2024-11-15"
 LLM_API_VERSION = "2025-10-15"
@@ -50,11 +56,12 @@ SERVICES = (
     "realtime_mai_2_api",
     "realtime_diarization",
     "whisper_v3",
+    "azure_whisper",
 )
 
 STREAMING_SERVICES = ("realtime", "realtime_refine", "realtime_mai_2", "realtime_mai_2_api", "realtime_diarization")
 DEFAULT_SERVICES = tuple(service for service in SERVICES
-                         if service not in ("realtime_mai_2_api", "realtime_diarization"))
+                         if service not in ("realtime_mai_2_api", "realtime_diarization", "azure_whisper"))
 
 # Speech regions documentation, verified 2026-10-10. Used for warnings, not routing.
 ENHANCED_REST_REGIONS = ("centralindia", "eastus", "northeurope", "southeastasia", "westus", "westus2")
@@ -134,6 +141,14 @@ def assert_credentials(services: tuple[str, ...] = DEFAULT_SERVICES) -> None:
         if service not in SERVICES:
             raise ValueError(f"Unknown service: {service}")
         if service == "whisper_v3":
+            continue
+        if service == "azure_whisper":
+            if WHISPER_AZURE_REQUESTS_PER_MINUTE < 1:
+                raise ValueError("WHISPER_AZURE_REQUESTS_PER_MINUTE must be positive")
+            if not WHISPER_AZURE_KEY or not WHISPER_AZURE_DEPLOYMENT:
+                raise ValueError("azure_whisper: configure WHISPER_AZURE_KEY and WHISPER_AZURE_DEPLOYMENT")
+            from .asr_whisper import azure_whisper_url
+            azure_whisper_url()
             continue
         if service == "realtime_refine":
             key, endpoint, region = REFINE_AZURE_KEY, REFINE_AZURE_ENDPOINT, REFINE_AZURE_REGION

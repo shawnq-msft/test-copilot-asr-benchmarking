@@ -15,7 +15,7 @@ from .asr_llm_speech import (transcribe_fast_llm,
                              transcribe_fast_mai_1_5, transcribe_fast_mai_2)
 from .asr_realtime import (transcribe_realtime, transcribe_realtime_refine,
                            transcribe_realtime_mai_2, transcribe_realtime_diarization)
-from .asr_whisper import transcribe_whisper_v3
+from .asr_whisper import transcribe_whisper_v3, transcribe_azure_whisper
 from .asr_mai_realtime_api import transcribe_realtime_mai_2_api
 from .config import DEFAULT_SERVICES, STREAMING_SERVICES, AsrResult, Sample
 from .metrics import wer, wer_breakdown, sentence_error, cer_breakdown, normalize_characters
@@ -34,6 +34,7 @@ ADAPTERS = {
     "realtime_mai_2_api": transcribe_realtime_mai_2_api,
     "realtime_diarization": transcribe_realtime_diarization,
     "whisper_v3": transcribe_whisper_v3,
+    "azure_whisper": transcribe_azure_whisper,
 }
 
 CSV_FIELDS = [

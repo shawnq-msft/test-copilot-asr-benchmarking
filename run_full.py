@@ -47,8 +47,8 @@ Examples:
     p.add_argument("--chunk-ms", type=int, default=100,
                    help="Streaming audio chunk duration in ms (default: 100; REST unchanged)")
     p.add_argument("--services", nargs="+", choices=SERVICES, default=list(DEFAULT_SERVICES),
-                   help="Services to benchmark; choose a mode-compatible subset. Automatic-only realtime_mai_2 "
-                        "requires explicit multilingual/native mode. "
+                   help="Services to benchmark; choose a mode-compatible subset. realtime_mai_2 "
+                        "uses base language codes in monolingual mode. "
                         "Example: --services fast_default fast_mai_2 realtime realtime_mai_2")
     p.add_argument("--resume", type=str, default=None,
                    help="Path to an existing CSV to resume from (skips already-completed rows)")

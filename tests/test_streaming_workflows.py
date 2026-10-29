@@ -163,6 +163,31 @@ class StreamingTests(unittest.TestCase):
         self.assertEqual(fake.config.speech_recognition_language, "en-GB")
         self.assertIsNone(result.error)
 
+    def test_mai_monolingual_uses_language_code(self):
+        from benchmark.eval_options import EvaluationOptions
+        for locale, code in (("zh-CN", "zh"), ("en-GB", "en")):
+            fake = FakeSpeech()
+            sample = self.sample()
+            sample.locale = locale
+            sample.evaluation_options = EvaluationOptions()
+            with self.subTest(locale=locale), patch.object(asr_realtime, "speechsdk", fake), \
+                    patch.object(asr_realtime.time, "sleep"):
+                result = self.invoke(sample, True)
+            self.assertEqual(fake.config.speech_recognition_language, code)
+            self.assertEqual(result.streaming_evidence["sdk_language_code"], code)
+            self.assertEqual(result.streaming_evidence["requested_language"], locale)
+            self.assertFalse(hasattr(fake.config, "timestamps"))
+
+    def test_mai_native_leaves_language_unset(self):
+        from benchmark.eval_options import EvaluationOptions
+        fake = FakeSpeech()
+        sample = self.sample()
+        sample.evaluation_options = EvaluationOptions("multilingual", "native")
+        with patch.object(asr_realtime, "speechsdk", fake), patch.object(asr_realtime.time, "sleep"):
+            result = self.invoke(sample, True)
+        self.assertFalse(hasattr(fake.config, "speech_recognition_language"))
+        self.assertIsNone(result.streaming_evidence["sdk_language_code"])
+
     def test_matched_chunk_packetization_and_pacing(self):
         for chunk_ms, count in ((20, 10), (100, 2)):
             with self.subTest(chunk_ms=chunk_ms):
@@ -628,7 +653,7 @@ class WorkflowTests(unittest.TestCase):
                 patch.object(validate_benchmark, "assert_credentials"), \
                 patch.object(validate_benchmark, "collect_samples", return_value=[self.sample]), \
                 patch.object(validate_benchmark, "check_selection", wraps=check_selection) as selection:
-            self.assertEqual(validate_benchmark.main(), 1)
+            self.assertEqual(validate_benchmark.main(), 0)
             self.assertEqual(selection.call_args.args[0], list(config.DEFAULT_SERVICES))
 
 
